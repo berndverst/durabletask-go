@@ -1,0 +1,118 @@
+syntax = "proto3";
+
+package dtmb.backend.v1;
+
+option go_package = "github.com/microsoft/dtmb-go/protos/backend/v1;backend";
+option csharp_namespace = "Microsoft.DTMB.Backend.Autogen.Grpc.v1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+import "backend/v1/common.proto";
+
+// Client for Durable Task operations.
+service TaskHubClient {
+    // Gets information about the service.
+    rpc Metadata (MetadataRequest) returns (MetadataResponse);
+
+    // Creates a new orchestration instance.
+    rpc CreateOrchestration (CreateOrchestrationRequest) returns (CreateOrchestrationResponse);
+
+    // Raises an event to a running orchestration instance that's waiting on a signal.
+    rpc RaiseEvent (RaiseEventRequest) returns (RaiseEventResponse);
+
+    // Retrieves the state of the specified orchestration.
+    // The caller specifies options such as whether to include inputs, outputs, and/or the full history.
+    rpc GetOrchestration (GetOrchestrationRequest) returns (GetOrchestrationResponse);
+
+    // Deletes the runtime state of the specified orchestration.
+    rpc PurgeOrchestration (PurgeOrchestrationRequest) returns (PurgeOrchestrationResponse);
+}
+
+message CreateOrchestrationRequest { 
+    // The unique ID of the orchestration instance to create.
+    string orchestration_id = 1 [json_name = "orchestrationId"];
+    // Name of the orchestration to start. Used by the SDK to dispatch to the correct orchestrator function.
+    string name = 2;
+    // Version of the orchestration to start. Used by the SDK to dispatch to the correct orchestrator function.
+    string version = 3;
+    // Optional orchestration input data.
+    bytes input = 4;
+    // Optionally make the orchestration start at a later time.
+    // If not specified, the orchestration will start immediately.
+    oneof delayed {
+        // Absolute time at which the orchestration should start.
+        google.protobuf.Timestamp start_at = 10 [json_name = "startAt"];
+        // Delay to start the orchestration from the current time
+        google.protobuf.Duration delay = 11 [json_name = "delay"];
+    }
+    // Policy for reusing existing orchestration IDs.
+    OrchestrationIDReusePolicy id_reuse_policy = 20 [json_name = "idReusePolicy"];
+}
+
+message CreateOrchestrationResponse {
+    // ID of the orchestration
+    string orchestration_id = 1 [json_name = "orchestrationId"];
+    // ID of the execution
+    string execution_id = 2 [json_name = "executionId"];
+}
+
+message OrchestrationIDReusePolicy {
+    enum CreateOrchestrationAction {
+        ERROR = 0;
+        IGNORE = 1;
+        TERMINATE = 2;
+    }
+
+    // The orchestration runtime statuses that can trigger the action.
+    repeated OrchestrationStatus runtime_status = 1 [json_name = "runtimeStatus"];
+    // The action to take when the orchestration runtime status matches one of the statuses.
+    CreateOrchestrationAction action = 2;
+}
+
+message RaiseEventRequest {
+    string orchestration_id = 1 [json_name = "orchestrationId"];
+    string name = 2;
+    bytes input = 3;
+}
+
+message RaiseEventResponse {
+    // Empty for now
+}
+
+message GetOrchestrationRequest {
+    string orchestration_id = 1;
+}
+
+message GetOrchestrationResponse {
+    string execution_id = 1 [json_name = "executionId"];
+    string name = 2;
+    string version = 3;
+    OrchestrationStatus orchestration_status = 5 [json_name = "orchestrationStatus"];
+    google.protobuf.Timestamp created_at = 10 [json_name = "createdAt"];
+    google.protobuf.Timestamp last_updated_at = 11 [json_name = "lastUpdatedAt"];
+    google.protobuf.Timestamp start_at = 12 [json_name = "startAt"];
+    google.protobuf.Timestamp completed_at = 13 [json_name = "completedAt"];
+    bytes input = 20;
+    bytes output = 21;
+    string custom_status = 22 [json_name = "customStatus"];
+    TaskFailureDetails failure_details = 30 [json_name = "failureDetails"];
+}
+
+message PurgeOrchestrationRequest {
+    message PurgeOrchestrationFilter {
+        google.protobuf.Timestamp created_time_from = 1 [json_name = "createTimeFrom"];
+        google.protobuf.Timestamp created_time_to = 2 [json_name = "createTimeTo"];
+        repeated OrchestrationStatus runtime_status = 3  [json_name = "runtimeStatus"];
+    }
+
+    oneof request {
+        string orchestration_id = 1 [json_name = "orchestrationId"];
+        PurgeOrchestrationFilter purge_orchestration_filter = 2 [json_name = "purgeOrchestrationFilter"];
+    }
+
+    bool non_recursive = 3 [json_name = "nonRecursive"];
+}
+
+message PurgeOrchestrationResponse {
+    uint32 deleted_count = 1 [json_name = "deletedCount"];
+}

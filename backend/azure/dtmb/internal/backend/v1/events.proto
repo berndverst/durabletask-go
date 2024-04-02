@@ -1,0 +1,142 @@
+syntax = "proto3";
+
+package dtmb.backend.v1;
+
+option go_package = "github.com/microsoft/dtmb-go/protos/backend/v1;backend";
+option csharp_namespace = "Microsoft.DTMB.Backend.Autogen.Grpc.v1";
+
+import "google/protobuf/timestamp.proto";
+import "backend/v1/common.proto";
+
+// Event in the inbox and history stack
+message Event {
+    uint64 sequence_number = 1 [json_name = "seq"];
+    google.protobuf.Timestamp timestamp = 2;
+    bytes event_hash = 3 [json_name = "hash"];
+    oneof event_type {
+        ExecutionStartedEvent execution_started = 100 [json_name = "executionStarted"];
+        ExecutionCompletedEvent execution_completed = 101 [json_name = "executionCompleted"];
+        ExecutionTerminatedEvent execution_terminated = 102 [json_name = "executionTerminated"];
+        TaskScheduledEvent task_scheduled = 103 [json_name = "taskScheduled"];
+        TaskCompletedEvent task_completed = 104 [json_name = "taskCompleted"];
+        TaskFailedEvent task_failed = 105 [json_name = "taskFailed"];
+        SubOrchestrationInstanceCreatedEvent sub_orchestration_instance_created = 106 [json_name = "subOrchestrationInstanceCreated"];
+        SubOrchestrationInstanceCompletedEvent sub_orchestration_instance_completed = 107 [json_name = "subOrchestrationInstanceCompleted"];
+        SubOrchestrationInstanceFailedEvent sub_orchestration_instance_failed = 108  [json_name = "subOrchestrationInstanceFailed"];
+        TimerCreatedEvent timer_created = 109 [json_name = "timerCreated"];
+        TimerFiredEvent timer_fired = 110 [json_name = "timerFired"];
+        OrchestratorStartedEvent orchestrator_started = 111 [json_name = "orchestratorStarted"];
+        OrchestratorCompletedEvent orchestrator_completed = 112 [json_name = "orchestratorCompleted"];
+        EventSentEvent event_sent = 113 [json_name = "eventSent"];
+        EventRaisedEvent event_raised = 114 [json_name = "eventRaised"];
+        GenericEvent generic_event = 115 [json_name = "genericEvent"];
+        HistoryStateEvent history_state = 116 [json_name = "historyState"];
+        ContinueAsNewEvent continue_as_new = 117 [json_name = "continueAsNew"];
+        ExecutionSuspendedEvent execution_suspended = 118 [json_name = "executionSuspended"];
+        ExecutionResumedEvent execution_resumed = 119 [json_name = "executionResumed"];
+    }
+}
+
+message ExecutionStartedEvent {
+    message ParentInstanceInfo {
+        // The ID of the parent orchestration
+        OrchestrationID orchestration_id = 1 [json_name = "orchestrationId"];
+        // The ID of the parent's task responsible for creating this orchestration
+        int32 task_id = 2 [json_name = "taskId"];
+        // Name of the orchestration
+        string name = 12;
+        // Version of the orchestration
+        string version = 13;
+    }
+
+    // ID of the orchestration
+    OrchestrationID orchestration_id = 1 [json_name = "orchestrationId"];
+    // Name of the orchestration to start
+    string name = 2;
+    // Version of the orchestration to start
+    string version = 3;
+    // Input data
+    bytes input = 4;
+    // Time the orchestration was scheduled at
+    google.protobuf.Timestamp scheduled_time = 5 [json_name = "scheduledTime"];
+    // Parent orchestration (optional)
+    ParentInstanceInfo parent = 10;
+    // Trace context (optional)
+    TraceContext trace_context = 20 [json_name = "traceContext"];
+}
+
+message ExecutionCompletedEvent {
+    // TODO
+}
+
+message ExecutionTerminatedEvent {
+    // TODO
+}
+
+message TaskScheduledEvent {
+    // TODO
+}
+
+message TaskCompletedEvent {
+    // TODO
+}
+
+message TaskFailedEvent {
+    // TODO
+}
+
+message SubOrchestrationInstanceCreatedEvent {
+    // TODO
+}
+
+message SubOrchestrationInstanceCompletedEvent {
+    // TODO
+}
+
+message SubOrchestrationInstanceFailedEvent {
+    // TODO
+}
+
+message TimerCreatedEvent {
+    // TODO
+}
+
+message TimerFiredEvent {
+    // TODO
+}
+
+message OrchestratorStartedEvent {
+    // Empty
+}
+
+message OrchestratorCompletedEvent {
+    // TODO
+}
+
+message EventSentEvent {
+    // TODO
+}
+
+message EventRaisedEvent {
+    // TODO
+}
+
+message GenericEvent {
+    // TODO
+}
+
+message HistoryStateEvent {
+    // TODO
+}
+
+message ContinueAsNewEvent {
+    // TODO
+}
+
+message ExecutionSuspendedEvent {
+    // TODO
+}
+
+message ExecutionResumedEvent {
+    // TODO
+}
