@@ -28,7 +28,7 @@ func (te *taskExecutor) ExecuteActivity(ctx context.Context, id api.InstanceID, 
 	ts := e.GetTaskScheduled()
 	if ts == nil {
 		// No clean way to deal with this other than to abandon it
-		return nil, fmt.Errorf("Unexpected event type for ExecuteActivity: %v", e.EventType)
+		return nil, fmt.Errorf("unexpected event type for ExecuteActivity: %v", e.EventType)
 	}
 	invoker, ok := te.Registry.activities[ts.Name]
 	if !ok {

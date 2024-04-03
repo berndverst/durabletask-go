@@ -33,7 +33,7 @@ func (w *taskHubWorker) Start(ctx context.Context) error {
 	if err := w.backend.CreateTaskHub(ctx); err != nil && err != ErrTaskHubExists {
 		return err
 	}
-	if err := w.backend.Start(ctx); err != nil {
+	if err := w.backend.Start(ctx, nil); err != nil {
 		return err
 	}
 	w.logger.Infof("worker started with backend %v", w.backend)

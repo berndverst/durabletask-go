@@ -1,4 +1,4 @@
-package de2
+package dtmb
 
 import (
 	"context"
@@ -17,22 +17,20 @@ import (
 )
 
 type dtmb struct {
-	logger   backend.Logger
-	endpoint string
-	options  *DTMBOptions
+	logger             backend.Logger
+	endpoint           string
+	options            *DTMBOptions
+	OrchestrationQueue [0]int // use lock to protect this
+	ActivityQueue      [0]int // use lock to protect this
 }
 
 type DTMBOptions struct {
-	Endpoint             string
-	ActivityFunction     []*dtmbprotos.ConnectWorkerRequest_ActivityFunctionType
-	OrchestratorFunction []*dtmbprotos.ConnectWorkerRequest_OrchestratorFunctionType
+	Endpoint string
 }
 
 func NewDTMBOptions(endpoint string) *DTMBOptions {
 	return &DTMBOptions{
-		Endpoint:             endpoint,
-		ActivityFunction:     []*dtmbprotos.ConnectWorkerRequest_ActivityFunctionType{},
-		OrchestratorFunction: []*dtmbprotos.ConnectWorkerRequest_OrchestratorFunctionType{},
+		Endpoint: endpoint,
 	}
 }
 
@@ -70,12 +68,14 @@ func (d dtmb) DeleteTaskHub(context.Context) error {
 }
 
 // Start starts any background processing done by this backend.
-func (d dtmb) Start(context.Context) error {
-	ctx := context.Background()
+func (d dtmb) Start(ctx context.Context, filterOptions *backend.FilterOptions) error {
+	// TODO: is the context provided a background context or what?
+	// ctx := context.Background()
 
 	connCtx, connCancel := context.WithTimeout(ctx, 15*time.Second) // TODO: make this a configurable timeout
 	conn, err := grpc.DialContext(connCtx, d.endpoint, grpc.WithBlock(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	connCancel()
+
 	if err != nil {
 		return fmt.Errorf("failed to connect to dtmb: %v", err)
 	}
@@ -100,7 +100,7 @@ func (d dtmb) Start(context.Context) error {
 		log.Println("Response from worker:", res)
 	}
 
-	err = connectWorker(ctx, d, worker)
+	err = connectWorker(ctx, filterOptions, worker)
 	if err != nil {
 		panic(err)
 	}
@@ -108,13 +108,27 @@ func (d dtmb) Start(context.Context) error {
 	return nil
 }
 
-func connectWorker(ctx context.Context, d dtmb, worker dtmbprotos.TaskHubWorkerClient) error {
+func connectWorker(ctx context.Context, filterOptions *backend.FilterOptions, worker dtmbprotos.TaskHubWorkerClient) error {
 	// Establish the ConnectWorker stream
-	stream, err := worker.ConnectWorker(ctx, &dtmbprotos.ConnectWorkerRequest{
-		Version:              "dev/1",
-		ActivityFunction:     d.options.ActivityFunction,
-		OrchestratorFunction: d.options.OrchestratorFunction,
-	})
+
+	var stream dtmbprotos.TaskHubWorker_ConnectWorkerClient
+	var err error
+
+	if filterOptions != nil {
+		// map filter options here
+		stream, err = worker.ConnectWorker(ctx, &dtmbprotos.ConnectWorkerRequest{
+			Version: "dev/1",
+			// ActivityFunction:     d.options.ActivityFunction,
+			// OrchestratorFunction: d.options.OrchestratorFunction,
+		})
+	} else {
+		stream, err = worker.ConnectWorker(ctx, &dtmbprotos.ConnectWorkerRequest{
+			Version:              "dev/1",
+			ActivityFunction:     nil,
+			OrchestratorFunction: nil,
+		})
+	}
+
 	if err != nil {
 		return fmt.Errorf("error starting ConnectWorker: %w", err)
 	}
@@ -248,7 +262,7 @@ func (d dtmb) Stop(context.Context) error {
 // wraps a ExecutionStarted event.
 func (d dtmb) CreateOrchestrationInstance(context.Context, *backend.HistoryEvent) error {
 	// return not implemented error
-	return fmt.Errorf("not implemented")
+	return fmt.Errorf("IMPLEMENTED")
 }
 
 // AddNewEvent adds a new orchestration event to the specified orchestration instance.
@@ -267,7 +281,7 @@ func (d dtmb) GetOrchestrationWorkItem(context.Context) (*backend.OrchestrationW
 // GetOrchestrationRuntimeState gets the runtime state of an orchestration instance.
 func (d dtmb) GetOrchestrationRuntimeState(context.Context, *backend.OrchestrationWorkItem) (*backend.OrchestrationRuntimeState, error) {
 	// return not implemented error
-	return nil, fmt.Errorf("not implemented")
+	return nil, fmt.Errorf("Get metadata")
 }
 
 // GetOrchestrationMetadata gets the metadata associated with the given orchestration instance ID.
@@ -275,7 +289,7 @@ func (d dtmb) GetOrchestrationRuntimeState(context.Context, *backend.Orchestrati
 // Returns [api.ErrInstanceNotFound] if the orchestration instance doesn't exist.
 func (d dtmb) GetOrchestrationMetadata(context.Context, api.InstanceID) (*api.OrchestrationMetadata, error) {
 	// return not implemented error
-	return nil, fmt.Errorf("not implemented")
+	return nil, fmt.Errorf("Get metadata")
 }
 
 // CompleteOrchestrationWorkItem completes a work item by saving the updated runtime state to durable storage.

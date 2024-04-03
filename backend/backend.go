@@ -22,6 +22,16 @@ var (
 type (
 	HistoryEvent       = protos.HistoryEvent
 	TaskFailureDetails = protos.TaskFailureDetails
+
+	FilterOptions struct {
+		orchestrators *[]TaskFilter
+		activities    *[]TaskFilter
+	}
+
+	TaskFilter struct {
+		Name        string
+		Concurrency int
+	}
 )
 
 type OrchestrationIdReusePolicyOptions func(*protos.OrchestrationIdReusePolicy) error
@@ -49,7 +59,10 @@ type Backend interface {
 	DeleteTaskHub(context.Context) error
 
 	// Start starts any background processing done by this backend.
-	Start(context.Context) error
+	// Backends supporting this feature can filter orchestrator and activity types server-side.
+	Start(context.Context, *FilterOptions) error
+	// orchestrators: make(map[string]Orchestrator),
+	// activities:    make(map[string]Activity),
 
 	// Stop stops any background processing done by this backend.
 	Stop(context.Context) error

@@ -17,7 +17,7 @@ func Test_TaskHubWorkerStartsDependencies(t *testing.T) {
 	actWorker := mocks.NewTaskWorker(t)
 
 	be.EXPECT().CreateTaskHub(ctx).Return(nil).Once()
-	be.EXPECT().Start(ctx).Return(nil).Once()
+	be.EXPECT().Start(ctx, nil).Return(nil).Once()
 	orchWorker.EXPECT().Start(ctx).Return().Once()
 	actWorker.EXPECT().Start(ctx).Return().Once()
 

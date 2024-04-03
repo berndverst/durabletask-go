@@ -169,7 +169,6 @@ func (be *sqliteBackend) AbandonOrchestrationWorkItem(ctx context.Context, wi *b
 		string(wi.InstanceID),
 		wi.LockedBy,
 	)
-
 	if err != nil {
 		return fmt.Errorf("failed to update Instances table: %w", err)
 	}
@@ -422,7 +421,6 @@ func (be *sqliteBackend) CreateOrchestrationInstance(ctx context.Context, e *bac
 		instanceID,
 		eventPayload,
 	)
-
 	if err != nil {
 		return fmt.Errorf("failed to insert row into [NewEvents] table: %w", err)
 	}
@@ -622,7 +620,6 @@ func (be *sqliteBackend) AddNewOrchestrationEvent(ctx context.Context, iid api.I
 		string(iid),
 		eventPayload,
 	)
-
 	if err != nil {
 		return fmt.Errorf("failed to insert row into [NewEvents] table: %w", err)
 	}
@@ -974,7 +971,7 @@ func (be *sqliteBackend) PurgeOrchestrationState(ctx context.Context, id api.Ins
 }
 
 // Start implements backend.Backend
-func (*sqliteBackend) Start(context.Context) error {
+func (*sqliteBackend) Start(context.Context, *backend.FilterOptions) error {
 	return nil
 }
 
