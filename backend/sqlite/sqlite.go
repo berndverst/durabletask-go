@@ -533,7 +533,7 @@ func (be *sqliteBackend) handleInstanceExists(ctx context.Context, tx *sql.Tx, s
 
 		// should never happen, because we clean up instance before create new one
 		if rows <= 0 {
-			return fmt.Errorf("failed to insert into [Instances] table because entry already exists.")
+			return fmt.Errorf("failed to insert into [Instances] table because entry already exists")
 		}
 		return nil
 	}
@@ -971,7 +971,7 @@ func (be *sqliteBackend) PurgeOrchestrationState(ctx context.Context, id api.Ins
 }
 
 // Start implements backend.Backend
-func (*sqliteBackend) Start(context.Context, *backend.FilterOptions) error {
+func (*sqliteBackend) Start(context.Context, *[]string, *[]string) error {
 	return nil
 }
 

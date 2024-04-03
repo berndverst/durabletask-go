@@ -38,7 +38,7 @@ func TestMain(m *testing.M) {
 	registerFn(grpcServer)
 	orchestrationWorker := backend.NewOrchestrationWorker(be, grpcExecutor, logger)
 	activityWorker := backend.NewActivityTaskWorker(be, grpcExecutor, logger)
-	taskHubWorker := backend.NewTaskHubWorker(be, orchestrationWorker, activityWorker, logger)
+	taskHubWorker := backend.NewTaskHubWorker(be, orchestrationWorker, activityWorker, logger, nil)
 	if err := taskHubWorker.Start(ctx); err != nil {
 		log.Fatalf("failed to start worker: %v", err)
 	}

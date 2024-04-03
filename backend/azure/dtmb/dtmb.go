@@ -68,7 +68,7 @@ func (d dtmb) DeleteTaskHub(context.Context) error {
 }
 
 // Start starts any background processing done by this backend.
-func (d dtmb) Start(ctx context.Context, filterOptions *backend.FilterOptions) error {
+func (d dtmb) Start(ctx context.Context, orchestrators *[]string, activities *[]string) error {
 	// TODO: is the context provided a background context or what?
 	// ctx := context.Background()
 
@@ -100,7 +100,7 @@ func (d dtmb) Start(ctx context.Context, filterOptions *backend.FilterOptions) e
 		log.Println("Response from worker:", res)
 	}
 
-	err = connectWorker(ctx, filterOptions, worker)
+	err = connectWorker(ctx, orchestrators, activities, worker)
 	if err != nil {
 		panic(err)
 	}
@@ -108,27 +108,37 @@ func (d dtmb) Start(ctx context.Context, filterOptions *backend.FilterOptions) e
 	return nil
 }
 
-func connectWorker(ctx context.Context, filterOptions *backend.FilterOptions, worker dtmbprotos.TaskHubWorkerClient) error {
+func connectWorker(ctx context.Context, orchestrators *[]string, activities *[]string, worker dtmbprotos.TaskHubWorkerClient) error {
 	// Establish the ConnectWorker stream
 
 	var stream dtmbprotos.TaskHubWorker_ConnectWorkerClient
 	var err error
 
-	if filterOptions != nil {
-		// map filter options here
-		stream, err = worker.ConnectWorker(ctx, &dtmbprotos.ConnectWorkerRequest{
-			Version: "dev/1",
-			// ActivityFunction:     d.options.ActivityFunction,
-			// OrchestratorFunction: d.options.OrchestratorFunction,
-		})
-	} else {
-		stream, err = worker.ConnectWorker(ctx, &dtmbprotos.ConnectWorkerRequest{
-			Version:              "dev/1",
-			ActivityFunction:     nil,
-			OrchestratorFunction: nil,
-		})
+	var activityFunctionTypes []*dtmbprotos.ConnectWorkerRequest_ActivityFunctionType = []*dtmbprotos.ConnectWorkerRequest_ActivityFunctionType{}
+	var orchestratorFunctionTypes []*dtmbprotos.ConnectWorkerRequest_OrchestratorFunctionType = []*dtmbprotos.ConnectWorkerRequest_OrchestratorFunctionType{}
+
+	if orchestrators != nil {
+		// populate orchestratorFunctionTypes
+		for _, orchestrator := range *orchestrators {
+			orchestratorFunctionTypes = append(orchestratorFunctionTypes, &dtmbprotos.ConnectWorkerRequest_OrchestratorFunctionType{
+				OrchestrationName: orchestrator,
+				ConcurrentLimit:   0, // TODO: make this configurable
+			})
+		}
+
+		// populate activityFunctionTypes
+		for _, activity := range *activities {
+			activityFunctionTypes = append(activityFunctionTypes, &dtmbprotos.ConnectWorkerRequest_ActivityFunctionType{
+				ActivityName: activity,
+			})
+		}
 	}
 
+	stream, err = worker.ConnectWorker(ctx, &dtmbprotos.ConnectWorkerRequest{
+		Version:              "dev/1",
+		ActivityFunction:     activityFunctionTypes,
+		OrchestratorFunction: orchestratorFunctionTypes,
+	})
 	if err != nil {
 		return fmt.Errorf("error starting ConnectWorker: %w", err)
 	}

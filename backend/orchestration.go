@@ -269,7 +269,7 @@ func (w *orchestratorProcessor) startOrResumeOrchestratorSpan(ctx context.Contex
 	return ctx, span
 }
 
-func (w *orchestratorProcessor) endOrchestratorSpan(ctx context.Context, wi *OrchestrationWorkItem, span trace.Span, continuedAsNew bool) {
+func (w *orchestratorProcessor) endOrchestratorSpan(_ context.Context, wi *OrchestrationWorkItem, span trace.Span, continuedAsNew bool) {
 	if wi.State.IsCompleted() {
 		if fd, err := wi.State.FailureDetails(); err == nil {
 			span.SetStatus(codes.Error, fd.ErrorMessage)

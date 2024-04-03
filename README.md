@@ -43,7 +43,7 @@ executor := backend.NewGrpcExecutor(grpcServer, be, logger)
 // Construct and start the task hub worker object, which polls the backend for new work
 orchestrationWorker := backend.NewOrchestrationWorker(be, executor, logger)
 activityWorker := backend.NewActivityTaskWorker(be, executor, logger)
-taskHubWorker := backend.NewTaskHubWorker(be, orchestrationWorker, activityWorker, logger)
+taskHubWorker := backend.NewTaskHubWorker(be, orchestrationWorker, activityWorker, logger, nil)
 taskHubWorker.Start(context.Background())
 
 // Start listening.

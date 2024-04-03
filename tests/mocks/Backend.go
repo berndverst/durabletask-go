@@ -697,17 +697,17 @@ func (_c *Backend_PurgeOrchestrationState_Call) RunAndReturn(run func(context.Co
 	return _c
 }
 
-// Start provides a mock function with given fields: _a0, _a1
-func (_m *Backend) Start(_a0 context.Context, _a1 *backend.FilterOptions) error {
-	ret := _m.Called(_a0, _a1)
+// Start provides a mock function with given fields: _a0, _a1, _a2
+func (_m *Backend) Start(_a0 context.Context, _a1 *[]string, _a2 *[]string) error {
+	ret := _m.Called(_a0, _a1, _a2)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Start")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, *backend.FilterOptions) error); ok {
-		r0 = rf(_a0, _a1)
+	if rf, ok := ret.Get(0).(func(context.Context, *[]string, *[]string) error); ok {
+		r0 = rf(_a0, _a1, _a2)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -722,13 +722,13 @@ type Backend_Start_Call struct {
 
 // Start is a helper method to define mock.On call
 //   - _a0 context.Context
-func (_e *Backend_Expecter) Start(_a0 interface{}, _a1 interface{}) *Backend_Start_Call {
-	return &Backend_Start_Call{Call: _e.mock.On("Start", _a0, _a1)}
+func (_e *Backend_Expecter) Start(_a0 interface{}, _a1 interface{}, _a2 interface{}) *Backend_Start_Call {
+	return &Backend_Start_Call{Call: _e.mock.On("Start", _a0, _a1, _a2)}
 }
 
-func (_c *Backend_Start_Call) Run(run func(_a0 context.Context, _a1 *backend.FilterOptions)) *Backend_Start_Call {
+func (_c *Backend_Start_Call) Run(run func(_a0 context.Context, _a1 *[]string, _a2 *[]string)) *Backend_Start_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(*backend.FilterOptions))
+		run(args[0].(context.Context), args[1].(*[]string), args[2].(*[]string))
 	})
 	return _c
 }
@@ -738,7 +738,7 @@ func (_c *Backend_Start_Call) Return(_a0 error) *Backend_Start_Call {
 	return _c
 }
 
-func (_c *Backend_Start_Call) RunAndReturn(run func(context.Context, *backend.FilterOptions)) *Backend_Start_Call {
+func (_c *Backend_Start_Call) RunAndReturn(run func(context.Context, *[]string, *[]string)) *Backend_Start_Call {
 	_c.Call.Return(run)
 	return _c
 }

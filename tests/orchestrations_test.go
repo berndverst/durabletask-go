@@ -1258,7 +1258,7 @@ func initTaskHubWorker(ctx context.Context, r *task.TaskRegistry, opts ...backen
 	executor := task.NewTaskExecutor(r)
 	orchestrationWorker := backend.NewOrchestrationWorker(be, executor, logger, opts...)
 	activityWorker := backend.NewActivityTaskWorker(be, executor, logger, opts...)
-	taskHubWorker := backend.NewTaskHubWorker(be, orchestrationWorker, activityWorker, logger)
+	taskHubWorker := backend.NewTaskHubWorker(be, orchestrationWorker, activityWorker, logger, r)
 	if err := taskHubWorker.Start(ctx); err != nil {
 		panic(err)
 	}
