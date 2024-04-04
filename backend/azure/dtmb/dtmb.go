@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/microsoft/durabletask-go/api"
@@ -20,8 +21,9 @@ type dtmb struct {
 	logger             backend.Logger
 	endpoint           string
 	options            *DTMBOptions
-	OrchestrationQueue [0]int // use lock to protect this
-	ActivityQueue      [0]int // use lock to protect this
+	orchestrationQueue syncQueue[dtmbprotos.ExecuteOrchestrationMessage]
+	activityQueue      syncQueue[dtmbprotos.ExecuteActivityMessage]
+	connection         *grpc.ClientConn
 }
 
 type DTMBOptions struct {
@@ -34,7 +36,7 @@ func NewDTMBOptions(endpoint string) *DTMBOptions {
 	}
 }
 
-func NewDTMB(opts *DTMBOptions, logger backend.Logger) *dtmb {
+func NewDTMB(opts *DTMBOptions, logger backend.Logger) (*dtmb, error) {
 	be := &dtmb{
 		logger: logger,
 	}
@@ -47,15 +49,63 @@ func NewDTMB(opts *DTMBOptions, logger backend.Logger) *dtmb {
 	be.options = opts
 	be.endpoint = opts.Endpoint
 
-	return be
+	be.orchestrationQueue = NewSyncQueue[dtmbprotos.ExecuteOrchestrationMessage]()
+	be.activityQueue = NewSyncQueue[dtmbprotos.ExecuteActivityMessage]()
+
+	ctx := context.Background()
+	connCtx, connCancel := context.WithTimeout(ctx, 15*time.Second) // TODO: make this a configurable timeout
+	conn, err := grpc.DialContext(connCtx, be.endpoint, grpc.WithBlock(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	connCancel()
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to dtmb: %v", err)
+	}
+
+	be.connection = conn
+
+	return be, nil
+}
+
+type syncQueue[T dtmbprotos.ExecuteOrchestrationMessage | dtmbprotos.ExecuteActivityMessage] struct {
+	lock  *sync.Mutex
+	items []*T
+}
+
+func NewSyncQueue[T dtmbprotos.ExecuteOrchestrationMessage | dtmbprotos.ExecuteActivityMessage]() syncQueue[T] {
+	return syncQueue[T]{
+		lock:  &sync.Mutex{},
+		items: []*T{},
+	}
+}
+
+func (q *syncQueue[T]) Enqueue(item *T) {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+	q.items = append(q.items, item)
+}
+
+func (q *syncQueue[T]) Dequeue() *T {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+	if len(q.items) == 0 {
+		return nil
+	}
+
+	item := q.items[0]
+	q.items = q.items[1:]
+	return item
 }
 
 // CreateTaskHub creates a new task hub for the current backend. Task hub creation must be idempotent.
 //
 // If the task hub for this backend already exists, an error of type [ErrTaskHubExists] is returned.
-func (d dtmb) CreateTaskHub(context.Context) error {
-	// return not implemented error
-	return fmt.Errorf("not implemented")
+func (d dtmb) CreateTaskHub(ctx context.Context) error {
+	client := dtmbprotos.NewTaskHubClientClient(d.connection)
+
+	_, err := client.Metadata(ctx, &dtmbprotos.MetadataRequest{})
+	if err != nil {
+		return backend.ErrTaskHubNotFound
+	}
+	return nil
 }
 
 // DeleteTaskHub deletes an existing task hub configured for the current backend. It's up to the backend
@@ -70,47 +120,18 @@ func (d dtmb) DeleteTaskHub(context.Context) error {
 // Start starts any background processing done by this backend.
 func (d dtmb) Start(ctx context.Context, orchestrators *[]string, activities *[]string) error {
 	// TODO: is the context provided a background context or what?
-	// ctx := context.Background()
+	worker := dtmbprotos.NewTaskHubWorkerClient(d.connection)
 
-	connCtx, connCancel := context.WithTimeout(ctx, 15*time.Second) // TODO: make this a configurable timeout
-	conn, err := grpc.DialContext(connCtx, d.endpoint, grpc.WithBlock(), grpc.WithTransportCredentials(insecure.NewCredentials()))
-	connCancel()
-
+	err := d.connectWorker(ctx, orchestrators, activities, worker)
 	if err != nil {
-		return fmt.Errorf("failed to connect to dtmb: %v", err)
-	}
-	defer conn.Close()
-
-	client := dtmbprotos.NewTaskHubClientClient(conn)
-	worker := dtmbprotos.NewTaskHubWorkerClient(conn)
-
-	{
-		res, err := client.Metadata(ctx, &dtmbprotos.MetadataRequest{})
-		if err != nil {
-			return fmt.Errorf("failed to get metadata: %v", err)
-		}
-		log.Println("Response from client:", res)
-	}
-
-	{
-		res, err := worker.Metadata(ctx, &dtmbprotos.MetadataRequest{})
-		if err != nil {
-			panic(err)
-		}
-		log.Println("Response from worker:", res)
-	}
-
-	err = connectWorker(ctx, orchestrators, activities, worker)
-	if err != nil {
-		panic(err)
+		return err
 	}
 
 	return nil
 }
 
-func connectWorker(ctx context.Context, orchestrators *[]string, activities *[]string, worker dtmbprotos.TaskHubWorkerClient) error {
+func (d dtmb) connectWorker(ctx context.Context, orchestrators *[]string, activities *[]string, client dtmbprotos.TaskHubWorkerClient) error {
 	// Establish the ConnectWorker stream
-
 	var stream dtmbprotos.TaskHubWorker_ConnectWorkerClient
 	var err error
 
@@ -134,7 +155,7 @@ func connectWorker(ctx context.Context, orchestrators *[]string, activities *[]s
 		}
 	}
 
-	stream, err = worker.ConnectWorker(ctx, &dtmbprotos.ConnectWorkerRequest{
+	stream, err = client.ConnectWorker(ctx, &dtmbprotos.ConnectWorkerRequest{
 		Version:              "dev/1",
 		ActivityFunction:     activityFunctionTypes,
 		OrchestratorFunction: orchestratorFunctionTypes,
@@ -144,7 +165,7 @@ func connectWorker(ctx context.Context, orchestrators *[]string, activities *[]s
 	}
 
 	// Wait for the first message
-	timeout := time.NewTimer(5 * time.Second)
+	timeout := time.NewTimer(5 * time.Second) // should this be configurable?
 	configReceived := make(chan error, 1)
 	var wc *dtmbprotos.WorkerConfiguration
 	go func() {
@@ -195,7 +216,7 @@ func connectWorker(ctx context.Context, orchestrators *[]string, activities *[]s
 			case <-tick.C:
 				log.Println("Sending ping…")
 				pingCtx, pingCancel := context.WithTimeout(ctx, 3*time.Second)
-				_, err := worker.Ping(pingCtx, pingRequest)
+				_, err := client.Ping(pingCtx, pingRequest)
 				pingCancel()
 				if err != nil {
 					err = fmt.Errorf("error sending ping: %w", err)
@@ -249,8 +270,18 @@ func connectWorker(ctx context.Context, orchestrators *[]string, activities *[]s
 				log.Println("Received ping from server")
 			} else {
 				log.Println("Received message", msg)
-			}
 
+				switch msg.GetMessage().(type) {
+				case *dtmbprotos.ConnectWorkerMessage_ExecuteActivity:
+					d.activityQueue.Enqueue(msg.GetExecuteActivity())
+				case *dtmbprotos.ConnectWorkerMessage_ExecuteOrchestration:
+					d.orchestrationQueue.Enqueue(msg.GetExecuteOrchestration())
+				case *dtmbprotos.ConnectWorkerMessage_AbandonWorkItems:
+					// not implemented
+				default:
+					log.Println("Received unknown message type")
+				}
+			}
 			// Reset healthCheckTick
 			healthCheckTick.Reset(healthCheckDuration)
 
@@ -285,13 +316,27 @@ func (d dtmb) AddNewOrchestrationEvent(context.Context, api.InstanceID, *backend
 // if there are no pending work items.
 func (d dtmb) GetOrchestrationWorkItem(context.Context) (*backend.OrchestrationWorkItem, error) {
 	// return not implemented error
-	return nil, fmt.Errorf("not implemented")
+	var ret *backend.OrchestrationWorkItem = nil
+	item := d.orchestrationQueue.Dequeue()
+	if item == nil {
+		return nil, backend.ErrNoWorkItems
+	}
+
+	ret = &backend.OrchestrationWorkItem{
+		InstanceID: api.InstanceID(item.OrchestrationId.InstanceId),
+		// NewEvents
+		// LockedBy:   "",
+		// RetryCount: 0,
+		// State
+		// Properties: map[string]interface{}{},
+	}
+	return ret, nil
 }
 
 // GetOrchestrationRuntimeState gets the runtime state of an orchestration instance.
 func (d dtmb) GetOrchestrationRuntimeState(context.Context, *backend.OrchestrationWorkItem) (*backend.OrchestrationRuntimeState, error) {
 	// return not implemented error
-	return nil, fmt.Errorf("Get metadata")
+	return nil, fmt.Errorf("not implemented: can be done via get metadata")
 }
 
 // GetOrchestrationMetadata gets the metadata associated with the given orchestration instance ID.
@@ -299,7 +344,7 @@ func (d dtmb) GetOrchestrationRuntimeState(context.Context, *backend.Orchestrati
 // Returns [api.ErrInstanceNotFound] if the orchestration instance doesn't exist.
 func (d dtmb) GetOrchestrationMetadata(context.Context, api.InstanceID) (*api.OrchestrationMetadata, error) {
 	// return not implemented error
-	return nil, fmt.Errorf("Get metadata")
+	return nil, fmt.Errorf("not implemented: can be done via get metadata")
 }
 
 // CompleteOrchestrationWorkItem completes a work item by saving the updated runtime state to durable storage.
@@ -324,7 +369,21 @@ func (d dtmb) AbandonOrchestrationWorkItem(context.Context, *backend.Orchestrati
 // if there are no pending activity work items.
 func (d dtmb) GetActivityWorkItem(context.Context) (*backend.ActivityWorkItem, error) {
 	// return not implemented error
-	return nil, fmt.Errorf("not implemented")
+	var ret *backend.ActivityWorkItem = nil
+	item := d.activityQueue.Dequeue()
+	if item == nil {
+		return nil, backend.ErrNoWorkItems
+	}
+
+	ret = &backend.ActivityWorkItem{
+		InstanceID:     api.InstanceID(item.OrchestrationId.InstanceId),
+		SequenceNumber: int64(item.GetSequenceNumber()),
+		// NewEvent ?
+		// Result ?
+		// LockedBy ?
+		// Properties ?
+	}
+	return ret, nil
 }
 
 // CompleteActivityWorkItem sends a message to the parent orchestration indicating activity completion.
