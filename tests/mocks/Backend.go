@@ -699,7 +699,12 @@ func (_c *Backend_PurgeOrchestrationState_Call) RunAndReturn(run func(context.Co
 
 // Start provides a mock function with given fields: _a0, _a1, _a2
 func (_m *Backend) Start(_a0 context.Context, _a1 *[]string, _a2 *[]string) error {
-	ret := _m.Called(_a0, _a1, _a2)
+	var ret mock.Arguments
+	if _a1 == nil && _a2 == nil {
+		ret = _m.Called(_a0, nil, nil)
+	} else {
+	ret = _m.Called(_a0, _a1, _a2)
+	}
 
 	if len(ret) == 0 {
 		panic("no return value specified for Start")

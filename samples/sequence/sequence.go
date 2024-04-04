@@ -46,7 +46,7 @@ func main() {
 }
 
 // Init creates and initializes an in-memory client and worker pair with default configuration.
-func Init(ctx context.Context, r *task.TaskRegistry) (backend.TaskHubClient, backend.TaskHubWorker, error) {
+func Init(ctx context.Context, r *task.TaskRegistry) (backend.TaskHubClient, task.TaskHubWorker, error) {
 	logger := backend.DefaultLogger()
 
 	// Create an executor
@@ -57,7 +57,7 @@ func Init(ctx context.Context, r *task.TaskRegistry) (backend.TaskHubClient, bac
 	be := sqlite.NewSqliteBackend(sqlite.NewSqliteOptions(""), logger)
 	orchestrationWorker := backend.NewOrchestrationWorker(be, executor, logger)
 	activityWorker := backend.NewActivityTaskWorker(be, executor, logger)
-	taskHubWorker := backend.NewTaskHubWorker(be, orchestrationWorker, activityWorker, logger, r)
+	taskHubWorker := task.NewTaskHubWorker(be, orchestrationWorker, activityWorker, logger, r)
 
 	// Start the worker
 	err := taskHubWorker.Start(ctx)

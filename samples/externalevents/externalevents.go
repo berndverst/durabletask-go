@@ -30,7 +30,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to schedule new orchestration: %v", err)
 	}
-	metadata, err := client.WaitForOrchestrationStart(ctx, id)
+	metadata, err := client.WaitForOrchestrationStart(ctx, id) //nolint:staticcheck
 	if err != nil {
 		log.Fatalf("Failed to wait for orchestration to start: %v", err)
 	}
@@ -58,7 +58,7 @@ func main() {
 }
 
 // Init creates and initializes an in-memory client and worker pair with default configuration.
-func Init(ctx context.Context, r *task.TaskRegistry) (backend.TaskHubClient, backend.TaskHubWorker, error) {
+func Init(ctx context.Context, r *task.TaskRegistry) (backend.TaskHubClient, task.TaskHubWorker, error) {
 	logger := backend.DefaultLogger()
 
 	// Create an executor
@@ -69,7 +69,7 @@ func Init(ctx context.Context, r *task.TaskRegistry) (backend.TaskHubClient, bac
 	be := sqlite.NewSqliteBackend(sqlite.NewSqliteOptions(""), logger)
 	orchestrationWorker := backend.NewOrchestrationWorker(be, executor, logger)
 	activityWorker := backend.NewActivityTaskWorker(be, executor, logger)
-	taskHubWorker := backend.NewTaskHubWorker(be, orchestrationWorker, activityWorker, logger, r)
+	taskHubWorker := task.NewTaskHubWorker(be, orchestrationWorker, activityWorker, logger, r)
 
 	// Start the worker
 	err := taskHubWorker.Start(ctx)

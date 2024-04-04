@@ -38,7 +38,7 @@ func TestMain(m *testing.M) {
 	registerFn(grpcServer)
 	orchestrationWorker := backend.NewOrchestrationWorker(be, grpcExecutor, logger)
 	activityWorker := backend.NewActivityTaskWorker(be, grpcExecutor, logger)
-	taskHubWorker := backend.NewTaskHubWorker(be, orchestrationWorker, activityWorker, logger, nil)
+	taskHubWorker := task.NewTaskHubWorker(be, orchestrationWorker, activityWorker, logger, nil)
 	if err := taskHubWorker.Start(ctx); err != nil {
 		log.Fatalf("failed to start worker: %v", err)
 	}
@@ -351,7 +351,7 @@ func Test_Grpc_ReuseInstanceIDError(t *testing.T) {
 
 	id, err := grpcClient.ScheduleNewOrchestration(ctx, "SingleActivity", api.WithInput("世界"), api.WithInstanceID(instanceID))
 	require.NoError(t, err)
-	id, err = grpcClient.ScheduleNewOrchestration(ctx, "SingleActivity", api.WithInput("World"), api.WithInstanceID(id))
+	_, err = grpcClient.ScheduleNewOrchestration(ctx, "SingleActivity", api.WithInput("World"), api.WithInstanceID(id))
 	if assert.Error(t, err) {
 		assert.Contains(t, err.Error(), "orchestration instance already exists")
 	}

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/microsoft/durabletask-go/backend"
+	"github.com/microsoft/durabletask-go/task"
 	"github.com/microsoft/durabletask-go/tests/mocks"
 	"github.com/stretchr/testify/assert"
 )
@@ -17,11 +17,11 @@ func Test_TaskHubWorkerStartsDependencies(t *testing.T) {
 	actWorker := mocks.NewTaskWorker(t)
 
 	be.EXPECT().CreateTaskHub(ctx).Return(nil).Once()
-	be.EXPECT().Start(ctx, nil).Return(nil).Once()
+	be.EXPECT().Start(ctx, nil, nil).Return(nil).Once()
 	orchWorker.EXPECT().Start(ctx).Return().Once()
 	actWorker.EXPECT().Start(ctx).Return().Once()
 
-	w := backend.NewTaskHubWorker(be, orchWorker, actWorker, logger, nil)
+	w := task.NewTaskHubWorker(be, orchWorker, actWorker, logger, nil)
 	err := w.Start(ctx)
 	assert.NoError(t, err)
 }
@@ -37,7 +37,7 @@ func Test_TaskHubWorkerStopsDependencies(t *testing.T) {
 	orchWorker.EXPECT().StopAndDrain().Return().Once()
 	actWorker.EXPECT().StopAndDrain().Return().Once()
 
-	w := backend.NewTaskHubWorker(be, orchWorker, actWorker, logger, nil)
+	w := task.NewTaskHubWorker(be, orchWorker, actWorker, logger, nil)
 	err := w.Shutdown(ctx)
 	assert.NoError(t, err)
 }

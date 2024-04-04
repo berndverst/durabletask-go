@@ -1,9 +1,9 @@
-package backend
+package task
 
 import (
 	"context"
 
-	"github.com/microsoft/durabletask-go/task"
+	"github.com/microsoft/durabletask-go/backend"
 )
 
 type TaskHubWorker interface {
@@ -15,14 +15,14 @@ type TaskHubWorker interface {
 }
 
 type taskHubWorker struct {
-	backend             Backend
-	orchestrationWorker TaskWorker
-	activityWorker      TaskWorker
-	logger              Logger
-	taskRegistry        *task.TaskRegistry
+	backend             backend.Backend
+	orchestrationWorker backend.TaskWorker
+	activityWorker      backend.TaskWorker
+	logger              backend.Logger
+	taskRegistry        *TaskRegistry
 }
 
-func NewTaskHubWorker(be Backend, orchestrationWorker TaskWorker, activityWorker TaskWorker, logger Logger, taskRegistry *task.TaskRegistry) TaskHubWorker {
+func NewTaskHubWorker(be backend.Backend, orchestrationWorker backend.TaskWorker, activityWorker backend.TaskWorker, logger backend.Logger, taskRegistry *TaskRegistry) TaskHubWorker {
 	return &taskHubWorker{
 		backend:             be,
 		orchestrationWorker: orchestrationWorker,
@@ -34,14 +34,14 @@ func NewTaskHubWorker(be Backend, orchestrationWorker TaskWorker, activityWorker
 
 func (w *taskHubWorker) Start(ctx context.Context) error {
 	// TODO: Check for already started worker
-	if err := w.backend.CreateTaskHub(ctx); err != nil && err != ErrTaskHubExists {
+	if err := w.backend.CreateTaskHub(ctx); err != nil && err != backend.ErrTaskHubExists {
 		return err
 	}
 
 	var orchestrators *[]string = nil
 	var activities *[]string = nil
 
-	// If a task registry reference was provided we can get the orchestrator and activity names to inform the backend only to send these types
+	// If a task registry reference was provided we can get the orchestrator and activity names
 	if w.taskRegistry != nil {
 		orchestrators = w.taskRegistry.GetOrchestratorNames()
 		activities = w.taskRegistry.GetActivityNames()

@@ -379,9 +379,10 @@ func (be *sqliteBackend) CompleteOrchestrationWorkItem(ctx context.Context, wi *
 		return backend.ErrWorkItemLockLost
 	}
 
-	if err != nil {
-		return fmt.Errorf("failed to delete from the NewEvents table: %w", err)
-	}
+	// TODO: Combine with error above
+	// if err != nil {
+	// 	return fmt.Errorf("failed to delete from the NewEvents table: %w", err)
+	// }
 
 	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
