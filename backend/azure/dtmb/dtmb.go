@@ -17,13 +17,20 @@ import (
 	dtmbprotos "github.com/microsoft/durabletask-go/backend/azure/dtmb/internal/backend/v1"
 )
 
+const (
+	// DefaultEndpoint is the default endpoint for the DTMB service.
+	defaultEndpoint = "localhost:50051"
+)
+
 type dtmb struct {
 	logger             backend.Logger
 	endpoint           string
 	options            *DTMBOptions
 	orchestrationQueue syncQueue[dtmbprotos.ExecuteOrchestrationMessage]
 	activityQueue      syncQueue[dtmbprotos.ExecuteActivityMessage]
-	connection         *grpc.ClientConn
+	// connection         *grpc.ClientConn
+	clientClient dtmbprotos.TaskHubClientClient
+	workerClient dtmbprotos.TaskHubWorkerClient
 }
 
 type DTMBOptions struct {
@@ -31,8 +38,14 @@ type DTMBOptions struct {
 }
 
 func NewDTMBOptions(endpoint string) *DTMBOptions {
-	return &DTMBOptions{
-		Endpoint: endpoint,
+	if endpoint != "" {
+		return &DTMBOptions{
+			Endpoint: endpoint,
+		}
+	} else {
+		return &DTMBOptions{
+			Endpoint: defaultEndpoint,
+		}
 	}
 }
 
@@ -41,14 +54,13 @@ func NewDTMB(opts *DTMBOptions, logger backend.Logger) (*dtmb, error) {
 		logger: logger,
 	}
 
-	var defaultEndpoint string = "localhost:50051"
-
 	if opts == nil {
 		opts = NewDTMBOptions(defaultEndpoint)
 	}
 	be.options = opts
 	be.endpoint = opts.Endpoint
 
+	// The following queues are used to store messages received from the server
 	be.orchestrationQueue = NewSyncQueue[dtmbprotos.ExecuteOrchestrationMessage]()
 	be.activityQueue = NewSyncQueue[dtmbprotos.ExecuteActivityMessage]()
 
@@ -56,11 +68,13 @@ func NewDTMB(opts *DTMBOptions, logger backend.Logger) (*dtmb, error) {
 	connCtx, connCancel := context.WithTimeout(ctx, 15*time.Second) // TODO: make this a configurable timeout
 	conn, err := grpc.DialContext(connCtx, be.endpoint, grpc.WithBlock(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	connCancel()
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to dtmb: %v", err)
 	}
 
-	be.connection = conn
+	be.clientClient = dtmbprotos.NewTaskHubClientClient(conn)
+	be.workerClient = dtmbprotos.NewTaskHubWorkerClient(conn)
 
 	return be, nil
 }
@@ -99,9 +113,7 @@ func (q *syncQueue[T]) Dequeue() *T {
 //
 // If the task hub for this backend already exists, an error of type [ErrTaskHubExists] is returned.
 func (d dtmb) CreateTaskHub(ctx context.Context) error {
-	client := dtmbprotos.NewTaskHubClientClient(d.connection)
-
-	_, err := client.Metadata(ctx, &dtmbprotos.MetadataRequest{})
+	_, err := d.clientClient.Metadata(ctx, &dtmbprotos.MetadataRequest{})
 	if err != nil {
 		return backend.ErrTaskHubNotFound
 	}
@@ -120,9 +132,8 @@ func (d dtmb) DeleteTaskHub(context.Context) error {
 // Start starts any background processing done by this backend.
 func (d dtmb) Start(ctx context.Context, orchestrators *[]string, activities *[]string) error {
 	// TODO: is the context provided a background context or what?
-	worker := dtmbprotos.NewTaskHubWorkerClient(d.connection)
 
-	err := d.connectWorker(ctx, orchestrators, activities, worker)
+	err := d.connectWorker(ctx, orchestrators, activities)
 	if err != nil {
 		return err
 	}
@@ -130,8 +141,10 @@ func (d dtmb) Start(ctx context.Context, orchestrators *[]string, activities *[]
 	return nil
 }
 
-func (d dtmb) connectWorker(ctx context.Context, orchestrators *[]string, activities *[]string, client dtmbprotos.TaskHubWorkerClient) error {
+func (d dtmb) connectWorker(ctx context.Context, orchestrators *[]string, activities *[]string) error {
 	// Establish the ConnectWorker stream
+	client := d.workerClient
+
 	var stream dtmbprotos.TaskHubWorker_ConnectWorkerClient
 	var err error
 
@@ -314,7 +327,7 @@ func (d dtmb) AddNewOrchestrationEvent(context.Context, api.InstanceID, *backend
 
 // GetOrchestrationWorkItem gets a pending work item from the task hub or returns [ErrNoOrchWorkItems]
 // if there are no pending work items.
-func (d dtmb) GetOrchestrationWorkItem(context.Context) (*backend.OrchestrationWorkItem, error) {
+func (d dtmb) GetOrchestrationWorkItem(ctx context.Context) (*backend.OrchestrationWorkItem, error) {
 	// return not implemented error
 	var ret *backend.OrchestrationWorkItem = nil
 	item := d.orchestrationQueue.Dequeue()
@@ -322,8 +335,22 @@ func (d dtmb) GetOrchestrationWorkItem(context.Context) (*backend.OrchestrationW
 		return nil, backend.ErrNoWorkItems
 	}
 
+	historyRequest := &dtmbprotos.GetOrchestrationHistoryRequest{
+		OrchestrationId: item.GetOrchestrationId(),
+		// LastItem --
+		// TODO: Do I need to implement caching of orchestration history?
+	}
+
+	historyResponse, err := d.workerClient.GetOrchestrationHistory(ctx, historyRequest)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching orchestration history for orchestration id %s: %w", historyRequest.OrchestrationId, err)
+	}
+	historyResponse.Event[0].GetHistoryState()
+
 	ret = &backend.OrchestrationWorkItem{
 		InstanceID: api.InstanceID(item.OrchestrationId.InstanceId),
+		// State:      state,
+		// NewEvents: ,
 		// NewEvents
 		// LockedBy:   "",
 		// RetryCount: 0,
@@ -378,10 +405,10 @@ func (d dtmb) GetActivityWorkItem(context.Context) (*backend.ActivityWorkItem, e
 	ret = &backend.ActivityWorkItem{
 		InstanceID:     api.InstanceID(item.OrchestrationId.InstanceId),
 		SequenceNumber: int64(item.GetSequenceNumber()),
-		// NewEvent ?
-		// Result ?
-		// LockedBy ?
-		// Properties ?
+		// NewEvent: ,
+		// Result: ,
+		// LockedBy: ,
+		// Properties: ,
 	}
 	return ret, nil
 }
