@@ -6,7 +6,6 @@ option go_package = "github.com/microsoft/dtmb-go/protos/backend/v1;backend";
 option csharp_namespace = "Microsoft.DTMB.Backend.Autogen.Grpc.v1";
 
 import "google/protobuf/timestamp.proto";
-import "google/protobuf/duration.proto";
 import "backend/v1/common.proto";
 
 // Client for Durable Task operations.
@@ -31,20 +30,15 @@ service TaskHubClient {
 message CreateOrchestrationRequest { 
     // The unique ID of the orchestration instance to create.
     string orchestration_id = 1 [json_name = "orchestrationId"];
-    // Name of the orchestration to start. Used by the SDK to dispatch to the correct orchestrator function.
+    // Name of the orchestration to start.
     string name = 2;
-    // Version of the orchestration to start. Used by the SDK to dispatch to the correct orchestrator function.
+    // Version of the orchestration to start.
     string version = 3;
     // Optional orchestration input data.
     bytes input = 4;
     // Optionally make the orchestration start at a later time.
     // If not specified, the orchestration will start immediately.
-    oneof delayed {
-        // Absolute time at which the orchestration should start.
-        google.protobuf.Timestamp start_at = 10 [json_name = "startAt"];
-        // Delay to start the orchestration from the current time
-        google.protobuf.Duration delay = 11 [json_name = "delay"];
-    }
+    Delay start_at = 10 [json_name = "startAt"];
     // Policy for reusing existing orchestration IDs.
     OrchestrationIDReusePolicy id_reuse_policy = 20 [json_name = "idReusePolicy"];
 }
@@ -80,7 +74,10 @@ message RaiseEventResponse {
 }
 
 message GetOrchestrationRequest {
+    // ID of the orchestration
     string orchestration_id = 1;
+    // If true, does not include payloads (input/output) in the response
+    bool no_payloads = 2;
 }
 
 message GetOrchestrationResponse {
@@ -95,7 +92,7 @@ message GetOrchestrationResponse {
     bytes input = 20;
     bytes output = 21;
     string custom_status = 22 [json_name = "customStatus"];
-    TaskFailureDetails failure_details = 30 [json_name = "failureDetails"];
+    FailureDetails failure_details = 30 [json_name = "failureDetails"];
 }
 
 message PurgeOrchestrationRequest {

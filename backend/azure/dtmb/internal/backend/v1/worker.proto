@@ -8,37 +8,28 @@ option csharp_namespace = "Microsoft.DTMB.Backend.Autogen.Grpc.v1";
 import "google/protobuf/duration.proto";
 import "backend/v1/common.proto";
 import "backend/v1/events.proto";
-import "backend/v1/actions.proto";
+import "backend/v1/orchestrator-actions.proto";
+import "backend/v1/inbox-actions.proto";
 
 // Worker operations.
 service TaskHubWorker {
-    // Used to report health information.
+    // Used to ping the service.
     rpc Ping (PingRequest) returns (PingResponse);
 
     // Gets information about the service.
     rpc Metadata (MetadataRequest) returns (MetadataResponse);
 
-    // Opens a stream to receive work items from the task hub, including orchestration and activity work items
-    rpc ConnectWorker (ConnectWorkerRequest) returns (stream ConnectWorkerMessage);
+    // Opens a stream to receive work items from the task hub, including orchestration and activity work items.
+    // This is a bi-directional stream also used by the worker to report work item completions and send health checks.
+    rpc ConnectWorker (stream ConnectWorkerClientMessage) returns (stream ConnectWorkerServerMessage);
 
     // Retrieves the history of an orchestration from a given point.
     rpc GetOrchestrationHistory (GetOrchestrationHistoryRequest) returns (GetOrchestrationHistoryResponse);
-
-    // Completes a work item.
-    rpc CompleteWorkItem (CompleteWorkItemRequest) returns (CompleteWorkItemResponse);
-
-    // Abandons a work item.
-    rpc AbandonWorkItem (AbandonWorkItemRequest) returns (AbandonWorkItemResponse);
-
-    // Requests the service to pause sending more work for the specified amount of time.
-    rpc BackOff (BackOffRequest) returns (BackOffResponse);
 }
 
 // Request for Ping.
 message PingRequest {
-    // Optional instance ID for pings.
-    // This is sent by the service in the first message for ConnectWorker.
-    string instance_id = 1 [json_name = "instanceId"];
+    // Empty
 }
 
 // Response for Ping.
@@ -46,15 +37,40 @@ message PingResponse {
     // Empty
 }
 
+// Message sent by the client (worker) in the ConnectWorker stream.
 // Request for ConnectWorker.
 // Includes information about the current worker's capabilities
-message ConnectWorkerRequest {
+message ConnectWorkerClientMessage {
+    // Message to include.
+    // This is optional, and no message indicates a simple ping.
+    oneof message {
+        // Establish the connection of a new worker.
+        // This is sent once, and only once, as the first message from the worker on ConnectWorker.
+        // Servers should expect to receive this message within the first seconds of the ConnectWorker stream being established,
+        // and should cancel the stream if they don't receive in that time frame (or if they receive a different message before the EstablishWorkerConnectionMessage one).
+        EstablishWorkerConnectionMessage establish_worker_connection = 1 [json_name = "establishWorkerConnection"];
+        // Complete an orchestration work item.
+        CompleteOrchestrationMessage complete_orchestration = 2 [json_name = "completeOrchestration"];
+        // Complete an activity work item.
+        CompleteActivityMessage complete_activity = 3 [json_name = "completeActivity"];
+        // Abandon an orchestration work item.
+        AbandonOrchestrationMessage abandon_orchestration = 4 [json_name = "abandonOrchestration"];
+        // Abandon an activity work item.
+        AbandonActivityMessage abandon_activity = 5 [json_name = "abandonActivity"];
+        // Pause the delivery of work items, or resume if already paused.
+        BackOffMessage back_off = 6 [json_name = "backOff"];
+    }
+}
+
+// EstablishWorkerConnectionMessage is one of the messages that can be sent by the worker over ConnectWorker.
+// It is sent as the first message from the worker over the ConnectWorker stream, and it contains information about the worker.
+message EstablishWorkerConnectionMessage {
     // Version of the SDK used by the worker.
     string version = 1;
     // Maximum number of work items concurrently active on a worker across all types.
     // A value of 0 means no limit
     uint32 concurrent_limit = 10 [json_name = "concurrentLimit"];
-    // List of supported orchestraror functions.
+    // List of supported orchestrator functions.
     repeated OrchestratorFunctionType orchestrator_function = 20 [json_name = "orchestratorFunction"];
     // List of supported activity functions.
     repeated ActivityFunctionType activity_function = 21 [json_name = "activityFunction"];
@@ -62,9 +78,9 @@ message ConnectWorkerRequest {
     // Supported orchestrator function type
     message OrchestratorFunctionType {
         // Name of the orchestration.
-        string orchestration_name = 1 [json_name = "orchestrationName"];
+        string name = 1 [json_name = "name"];
         // Version of the orchestration (free-form).
-        string orchestration_version = 2 [json_name = "orchestrationVersion"];
+        string version = 2 [json_name = "version"];
         // Maximum number of work items concurrently active on a worker for a given orchestration
         // A value of 0 means no limit
         uint32 concurrent_limit = 10 [json_name = "concurrentLimit"];
@@ -73,21 +89,90 @@ message ConnectWorkerRequest {
     // Supported activity function type
     message ActivityFunctionType {
         // Name of the activity function.
-        string activity_name = 3 [json_name = "activityName"];
+        string name = 3 [json_name = "name"];
         // Maximum number of work items concurrently active on a worker for a given activity function
         // A value of 0 means no limit
         uint32 concurrent_limit = 10 [json_name = "concurrentLimit"];
     }
 }
 
+// CompleteOrchestrationMessage is one of the messages that can be sent by the worker over ConnectWorker.
+// It indicates that an orchestration has been completed.
+message CompleteOrchestrationMessage {
+    // ID of the orchestration instance.
+    string orchestration_id = 1 [json_name = "orchestrationId"];
+    // Name of the orchestration.
+    string name = 3;
+    // Version of the orchestration.
+    string version = 4;
+    // Completion token sent in the ExecuteOrchestrationMessage.
+    string completion_token = 5 [json_name = "completionToken"];
+    // Custom status to update (optional).
+    string custom_status = 10 [json_name = "customStatus"];
+    // Actions to schedule.
+    repeated OrchestratorAction actions = 20;
+}
+
+// CompleteActivityMessage is one of the messages that can be sent by the worker over ConnectWorker.
+// It indicates that an activity has been completed.
+message CompleteActivityMessage {
+    // ID of the orchestration instance.
+    string orchestration_id = 1 [json_name = "orchestrationId"];
+    // Name of the activity.
+    string name = 3;
+    // Version of the activity.
+    //string version = 4;
+    // Completion token sent in the ExecuteActivityMessage
+    string completion_token = 5 [json_name = "completionToken"];
+    // Output payload (optional)
+    bytes result = 6;
+    // Failure details for failed activities
+    FailureDetails failure_details = 10 [json_name = "failureDetails"];
+}
+
+// AbandonOrchestrationMessage is one of the messages that can be sent by the worker over ConnectWorker.
+// It indicates that an orchestration has been abandoned.
+message AbandonOrchestrationMessage {
+    // The unique ID of the orchestration instance.
+    string orchestration_id = 1 [json_name = "orchestrationId"];
+    // Name of the orchestration.
+    string name = 3;
+    // Version of the orchestration.
+    string version = 4;
+    // Completion token sent in the ExecuteOrchestrationMessage
+    string completion_token = 5 [json_name = "completionToken"];
+}
+
+// AbandonActivityMessage is one of the messages that can be sent by the worker over ConnectWorker.
+// It indicates that an activity has been abandoned.
+message AbandonActivityMessage {
+    // The unique ID of the orchestration instance.
+    string orchestration_id = 1 [json_name = "orchestrationId"];
+    // Name of the activity.
+    string name = 3;
+    // Version of the activity.
+    //string version = 4;
+    // Completion token sent in the ExecuteActivityMessage
+    string completion_token = 5 [json_name = "completionToken"];
+}
+
+// BackOffMessage is one of the messages that can be sent by the worker over ConnectWorker.
+// It requests the server to temporarily pause the delivery of work items (or resume the delivery if it was already paused).
+message BackOffMessage {
+    // Requested pause duration.
+    // If negative or zero (empty), stops any back-off and allows the service to resume sending work items immediately.
+    google.protobuf.Duration duration = 1;
+}
+
 // Message sent by the server in the ConnectWorker stream.
-message ConnectWorkerMessage {
+message ConnectWorkerServerMessage {
     // Message to include.
     // This is optional, and no message indicates a simple ping.
     oneof message {
         // Send certain configuration options for the worker.
         // This is sent once, and only once, in response to the first message from the worker on ConnectWorker.
-        // Clients should expect to receive this message within the first seconds of the ConnectWorker stream being established, and should cancel the stream if they don't receive in that time frame (or if they receive a different message before the WorkerConfiguration one).
+        // Clients should expect to receive this message within the first seconds of the ConnectWorker stream being established,
+        // and should cancel the stream if they don't receive in that time frame (or if they receive a different message before the WorkerConfiguration one).
         WorkerConfiguration worker_configuration = 1 [json_name = "workerConfiguration"];
         // Request the worker to abandon work items related to an orchestration.
         AbandonWorkItemsMessage abandon_work_items = 2 [json_name = "abandonWorkItems"];
@@ -100,7 +185,7 @@ message ConnectWorkerMessage {
 
 // WorkerConfiguration is one of the messages that can be sent by the server over ConnectWorker.
 // It contains certain configuration options for the worker.
-// This is normally sent in response to the first message from the worker on ConnectWorker, but can be sent as update at any time.
+// This is sent in response to the first message from the worker on ConnectWorker.
 message WorkerConfiguration {
     // ID of the connected instance
     string instance_id = 1 [json_name = "instanceId"];
@@ -112,15 +197,19 @@ message WorkerConfiguration {
 // It contains an orchestration work item to execute.
 message ExecuteOrchestrationMessage {
     // The unique ID of the orchestration instance.
-    OrchestrationID orchestration_id = 1 [json_name = "orchestrationId"];
+    string orchestration_id = 1 [json_name = "orchestrationId"];
+    // The unique ID of the execution
+    string execution_id = 2 [json_name = "executionId"];
     // Name of the orchestration.
     string name = 3;
     // Version of the orchestration.
     string version = 4;
     // Completion token.
     string completion_token = 5 [json_name = "completionToken"];
-    // Orchestration input data (optional).
-    bytes input = 10;
+    // Inbox action message.
+    InboxAction action = 10;
+    // Input data (optional).
+    bytes input = 11;
     // Retry count.
     uint32 retry_count = 20 [json_name = "retryCount"];
 }
@@ -129,33 +218,37 @@ message ExecuteOrchestrationMessage {
 // It contains an activity work item to execute.
 message ExecuteActivityMessage {
     // The unique ID of the orchestration instance.
-    OrchestrationID orchestration_id = 1 [json_name = "orchestrationId"];
-    // Sequence number
-    uint64 sequence_number = 2 [json_name = "sequenceNumber"];
-    // Name of the orchestration.
+    string orchestration_id = 1 [json_name = "orchestrationId"];
+    // The unique ID of the execution
+    string execution_id = 2 [json_name = "executionId"];
+    // Name of the activity.
     string name = 3;
     // Version of the activity.
-    string version = 4;
+    //string version = 4;
     // Completion token.
     string completion_token = 5 [json_name = "completionToken"];
     // Activity input data (optional).
-    bytes input = 10;
+    bytes input = 11;
+    // Retry count.
+    uint32 retry_count = 20 [json_name = "retryCount"];
 }
 
 // AbandonWorkItemsMessage is one of the messages that can be sent by the server over ConnectWorker.
 // It requests to abandon any work item related to an orchestration.
 message AbandonWorkItemsMessage {
     // The unique ID of the orchestration instance.
-    OrchestrationID orchestration_id = 1 [json_name = "orchestrationId"];
+    string orchestration_id = 1 [json_name = "orchestrationId"];
+    // The unique ID of the execution
+    string execution_id = 2 [json_name = "executionId"];
 }
 
 // Request for GetOrchestrationHistory.
 message GetOrchestrationHistoryRequest {
     // The unique ID of the orchestration instance.
-    OrchestrationID orchestration_id = 1 [json_name = "orchestrationId"];
+    string orchestration_id = 1 [json_name = "orchestrationId"];
     // Hash of the last item in the history stack that is cached on the worker.
     // If this is empty, returns the entire history.
-    bytes last_item = 2 [json_name = "lastItem"];
+    bytes last_item = 5 [json_name = "lastItem"];
 }
 
 // Response for GetOrchestrationHistory.
@@ -163,85 +256,4 @@ message GetOrchestrationHistoryResponse {
     // List of history events.
     // The list may start with an event with sequence number greater than 0 if the request contained a last_item that matched an item in the history stack.
     repeated Event event = 1;
-}
-
-// Request for CompleteWorkItem.
-message CompleteWorkItemRequest {
-    oneof work_item {
-        CompleteOrchestrationRequest orchestration = 1;
-        CompleteActivityRequest activity = 2;
-    }
-
-    message CompleteOrchestrationRequest {
-        // The unique ID of the orchestration instance.
-        OrchestrationID orchestration_id = 1 [json_name = "orchestrationId"];
-        // Completion token sent in the ExecuteOrchestrationMessage.
-        string completion_token = 3 [json_name = "completionToken"];
-        // Actions to schedule.
-        repeated OrchestratorAction actions = 4;
-        // Custom status to update (optional).
-        string custom_status = 5 [json_name = "customStatus"];
-    }
-
-    message CompleteActivityRequest {
-        // The unique ID of the orchestration instance.
-        OrchestrationID orchestration_id = 1 [json_name = "orchestrationId"];
-        // Sequence number
-        uint64 sequence_number = 2 [json_name = "sequenceNumber"];
-        // Completion token sent in the ExecuteActivityMessage
-        string completion_token = 3 [json_name = "completionToken"];
-        // Output payload (optional)
-        bytes result = 4;
-        TaskFailureDetails failure_details = 5 [json_name = "failureDetails"];
-    }
-}
-
-// Response for CompleteWorkItem.
-message CompleteWorkItemResponse {
-    // Empty
-}
-
-// Request for AbandonWorkItemRequest.
-message AbandonWorkItemRequest {
-    oneof work_item {
-        AbandonOrchestrationRequest orchestration = 1;
-        AbandonActivityRequest activity = 2;
-    }
-
-    message AbandonOrchestrationRequest {
-        // The unique ID of the orchestration instance.
-        OrchestrationID orchestration_id = 1 [json_name = "orchestrationId"];
-        // Completion token sent in the ExecuteActivityMessage
-        string completion_token = 3 [json_name = "completionToken"];
-    }
-
-    message AbandonActivityRequest {
-        // The unique ID of the orchestration instance.
-        OrchestrationID orchestration_id = 1 [json_name = "orchestrationId"];
-        // Sequence number
-        uint64 sequence_number = 2 [json_name = "sequenceNumber"];
-        // Completion token sent in the ExecuteActivityMessage
-        string completion_token = 3 [json_name = "completionToken"];
-    }
-}
-
-// Response for AbandonWorkItemRequest.
-message AbandonWorkItemResponse {
-    // Empty
-}
-
-// Request for BackOff.
-message BackOffRequest {
-    // ID of the instance making the request.
-    // This is sent by the service in the first message for ConnectWorker.
-    string instance_id = 1 [json_name = "instanceId"];
-
-    // Requested pause duration.
-    // If negative or zero (empty), stops any back-off and allows the service to resume sending work items immediately.
-    google.protobuf.Duration duration = 2;
-}
-
-// Response for BackOff.
-message BackOffResponse {
-    // Empty
 }

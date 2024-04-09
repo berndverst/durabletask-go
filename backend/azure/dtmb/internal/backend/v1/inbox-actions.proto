@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package dtmb.backend.v1;
+
+option go_package = "github.com/microsoft/dtmb-go/protos/backend/v1;backend";
+option csharp_namespace = "Microsoft.DTMB.Backend.Autogen.Grpc.v1";
+
+import "backend/v1/common.proto";
+
+message InboxAction {
+    oneof inbox_action_type {
+        CreateOrchestrationInboxAction create_orchestration = 100 [json_name = "createOrchestration"];
+        ActivityCompletedInboxAction activity_completed = 101 [json_name = "activityCompleted"];
+        ActivityFailedInboxAction activity_failed = 102 [json_name = "activityFailed"];
+    }
+}
+
+// An orchestration is starting
+message CreateOrchestrationInboxAction {
+    // ID of the orchestration
+    string orchestration_id = 1 [json_name = "orchestrationId"];
+    // Name of the orchestration to start
+    string name = 3;
+    // Version of the orchestration to start
+    string version = 4;
+    // Optionally make the orchestration start at a later time.
+    // If not specified, the orchestration will start immediately.
+    Delay start_at = 10 [json_name = "startAt"];
+    // Parent orchestration (optional)
+    ParentInstanceInfo parent = 20;
+    // Trace context (optional)
+    TraceContext trace_context = 30 [json_name = "traceContext"];
+}
+
+// A scheduled activity has completed successfully.
+message ActivityCompletedInboxAction {
+    // Sequence number of the event that scheduled this activity
+    uint32 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
+}
+
+// A scheduled activity has failed.
+message ActivityFailedInboxAction {
+    // Sequence number of the event that scheduled this activity
+    uint32 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
+    FailureDetails failure_details = 2 [json_name = "failureDetails"];
+}

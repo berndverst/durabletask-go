@@ -4,17 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/microsoft/durabletask-go/api"
 	"github.com/microsoft/durabletask-go/backend"
+	"github.com/microsoft/durabletask-go/internal/protos"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 
 	dtmbprotos "github.com/microsoft/durabletask-go/backend/azure/dtmb/internal/backend/v1"
+	"github.com/microsoft/durabletask-go/backend/azure/dtmb/internal/utils"
 )
 
 const (
@@ -143,166 +146,94 @@ func (d dtmb) Start(ctx context.Context, orchestrators *[]string, activities *[]
 
 func (d dtmb) connectWorker(ctx context.Context, orchestrators *[]string, activities *[]string) error {
 	// Establish the ConnectWorker stream
-	client := d.workerClient
+	worker := d.workerClient
+	var taskHubName string = "MAKE THIS CONFIGURABLE"
+	var testID string = "MAKE THIS CONFIGURABLE"
 
-	var stream dtmbprotos.TaskHubWorker_ConnectWorkerClient
-	var err error
+	readyCh := make(chan struct{})
+	bgErrCh := make(chan error)
+	clientMessageChan := make(chan *dtmbprotos.ConnectWorkerClientMessage)
+	serverMessageChan := make(chan *dtmbprotos.ConnectWorkerServerMessage)
 
-	var activityFunctionTypes []*dtmbprotos.ConnectWorkerRequest_ActivityFunctionType = []*dtmbprotos.ConnectWorkerRequest_ActivityFunctionType{}
-	var orchestratorFunctionTypes []*dtmbprotos.ConnectWorkerRequest_OrchestratorFunctionType = []*dtmbprotos.ConnectWorkerRequest_OrchestratorFunctionType{}
+	var orchestratorFnList utils.OrchestratorFnList = *orchestrators
+	var activityFnList utils.ActivityFnList = *activities
 
-	if orchestrators != nil {
-		// populate orchestratorFunctionTypes
-		for _, orchestrator := range *orchestrators {
-			orchestratorFunctionTypes = append(orchestratorFunctionTypes, &dtmbprotos.ConnectWorkerRequest_OrchestratorFunctionType{
-				OrchestrationName: orchestrator,
-				ConcurrentLimit:   0, // TODO: make this configurable
-			})
-		}
-
-		// populate activityFunctionTypes
-		for _, activity := range *activities {
-			activityFunctionTypes = append(activityFunctionTypes, &dtmbprotos.ConnectWorkerRequest_ActivityFunctionType{
-				ActivityName: activity,
-			})
-		}
-	}
-
-	stream, err = client.ConnectWorker(ctx, &dtmbprotos.ConnectWorkerRequest{
-		Version:              "dev/1",
-		ActivityFunction:     activityFunctionTypes,
-		OrchestratorFunction: orchestratorFunctionTypes,
-	})
-	if err != nil {
-		return fmt.Errorf("error starting ConnectWorker: %w", err)
-	}
-
-	// Wait for the first message
-	timeout := time.NewTimer(5 * time.Second) // should this be configurable?
-	configReceived := make(chan error, 1)
-	var wc *dtmbprotos.WorkerConfiguration
+	// start the bidirectional stream
 	go func() {
-		msg, err := stream.Recv()
-		if err != nil {
-			configReceived <- err
-			return
-		}
-
-		wc = msg.GetWorkerConfiguration()
-		if wc == nil {
-			configReceived <- errors.New("received unexpected message")
-			return
-		}
-
-		log.Println("Received configuration message", wc)
-		close(configReceived)
+		bgErrCh <- utils.ConnectWorker(
+			ctx,
+			testID,
+			taskHubName,
+			worker,
+			orchestratorFnList,
+			activityFnList,
+			serverMessageChan,
+			clientMessageChan,
+			func() {
+				close(readyCh)
+			},
+			true,
+		)
 	}()
 
+	// Wait for readiness
 	select {
-	case err = <-configReceived:
-		if !timeout.Stop() {
-			<-timeout.C
-		}
-		if err != nil {
-			return fmt.Errorf("error receiving configuration: %w", err)
-		}
-	case <-timeout.C:
-		return errors.New("timed out waiting for configuration message")
+	case err := <-bgErrCh: // This includes a timeout too
+		log.Printf("[%s] Error starting test: %v", testID, err)
+		return err
+	case <-readyCh:
+		// All good
 	}
 
-	// In background, start periodic pings as health checks
-	errChan := make(chan error, 1)
-	go func() {
-		// Do the ping 2s before the deadline
-		tick := time.NewTicker(wc.HealthCheckInterval.AsDuration() - (2 * time.Second))
-		defer tick.Stop()
+	// Do a ping as last warm-up
+	pingCtx, pingCancel := context.WithTimeout(ctx, 15*time.Second)
+	pingCtx = metadata.AppendToOutgoingContext(pingCtx,
+		"taskhub", taskHubName,
+	)
+	_, err := worker.Ping(pingCtx, &dtmbprotos.PingRequest{})
+	pingCancel()
+	if err != nil {
+		log.Printf("[%s] Ping error: %v", testID, err)
+		return fmt.Errorf("ping error: %w", err)
+	}
 
-		pingRequest := &dtmbprotos.PingRequest{
-			InstanceId: wc.InstanceId,
+	genActivityAction := func(idx int) *dtmbprotos.OrchestratorAction {
+		return &dtmbprotos.OrchestratorAction{
+			OrchestratorActionType: &dtmbprotos.OrchestratorAction_ScheduleActivity{
+				ScheduleActivity: &dtmbprotos.ScheduleActivityOrchestratorAction{
+					Name:  "count",
+					Input: []byte(strconv.Itoa(idx)),
+				},
+			},
 		}
-		for {
-			select {
-			case <-ctx.Done():
-				// Stop
-				return
+	}
 
-			case <-tick.C:
-				log.Println("Sending ping…")
-				pingCtx, pingCancel := context.WithTimeout(ctx, 3*time.Second)
-				_, err := client.Ping(pingCtx, pingRequest)
-				pingCancel()
-				if err != nil {
-					err = fmt.Errorf("error sending ping: %w", err)
-					select {
-					case errChan <- err:
-						// All good
-					default:
-						// Channel is full (so there's another error)
-					}
-				}
+	// Execute messages in background
+	go func() {
+		for msg := range serverMessageChan {
+			switch m := msg.Message.(type) {
+
+			case *dtmbprotos.ConnectWorkerServerMessage_ExecuteActivity:
+				go func() {
+					d.activityQueue.Enqueue(m.ExecuteActivity)
+				}()
+
+			case *dtmbprotos.ConnectWorkerServerMessage_ExecuteOrchestration:
+				go func() {
+					d.orchestrationQueue.Enqueue(m.ExecuteOrchestration)
+				}()
 			}
 		}
 	}()
 
-	// Process other messages in a background goroutine
-	msgChan := make(chan *dtmbprotos.ConnectWorkerMessage)
-	go func() {
-		for {
-			msg, err := stream.Recv()
-			if errors.Is(err, io.EOF) {
-				errChan <- io.EOF
-				return
-			} else if err != nil {
-				errChan <- fmt.Errorf("error receiving messages: %w", err)
-				return
-			}
-
-			msgChan <- msg
-		}
-	}()
-
-	// Process all channels
-	healthCheckDuration := wc.HealthCheckInterval.AsDuration()
-	healthCheckTick := time.NewTimer(healthCheckDuration)
-	defer healthCheckTick.Stop()
-
-	for {
-		select {
-		case err = <-errChan:
-			// io.EOF means the stream ended, so we can return cleanly
-			if errors.Is(err, io.EOF) {
-				log.Println("Stream ended")
-				return nil
-			}
-
-			// We have an error; return
-			return err
-
-		case msg := <-msgChan:
-			if msg.GetMessage() == nil {
-				log.Println("Received ping from server")
-			} else {
-				log.Println("Received message", msg)
-
-				switch msg.GetMessage().(type) {
-				case *dtmbprotos.ConnectWorkerMessage_ExecuteActivity:
-					d.activityQueue.Enqueue(msg.GetExecuteActivity())
-				case *dtmbprotos.ConnectWorkerMessage_ExecuteOrchestration:
-					d.orchestrationQueue.Enqueue(msg.GetExecuteOrchestration())
-				case *dtmbprotos.ConnectWorkerMessage_AbandonWorkItems:
-					// not implemented
-				default:
-					log.Println("Received unknown message type")
-				}
-			}
-			// Reset healthCheckTick
-			healthCheckTick.Reset(healthCheckDuration)
-
-		case <-healthCheckTick.C:
-			// A signal on healthCheckTick indicates that we haven't received a message from the server in an amount of time
-			// Assume the server is dead
-			return fmt.Errorf("did not receive a message from the server in %v; closing connection", healthCheckDuration)
-		}
+	// Wait for stop (or an error)
+	select {
+	case err = <-bgErrCh:
+		log.Printf("[%s] Error from ConnectWorker: %v", testID, err)
+		return fmt.Errorf("error from ConnectWorker: %w", err)
+	case <-ctx.Done():
+		// We stopped, so all good
+		return nil
 	}
 }
 
@@ -333,6 +264,79 @@ func (d dtmb) GetOrchestrationWorkItem(ctx context.Context) (*backend.Orchestrat
 	item := d.orchestrationQueue.Dequeue()
 	if item == nil {
 		return nil, backend.ErrNoWorkItems
+	}
+
+	switch {
+	case item.Name == "counter" && item.Version == "v1":
+		switch item.Action.InboxActionType.(type) {
+		case *dtmbprotos.InboxAction_CreateOrchestration:
+
+			// what to do here?
+			_ = &dtmbprotos.ConnectWorkerClientMessage_CompleteOrchestration{
+				CompleteOrchestration: &dtmbprotos.CompleteOrchestrationMessage{
+					OrchestrationId: item.OrchestrationId,
+					Name:            item.Name,
+					Version:         item.Version,
+					CompletionToken: item.CompletionToken,
+					CustomStatus:    "",
+					Actions: []*dtmbprotos.OrchestratorAction{
+						{
+							OrchestratorActionType: &dtmbprotos.OrchestratorAction_ScheduleActivity{
+								ScheduleActivity: &dtmbprotos.ScheduleActivityOrchestratorAction{
+									Name:  item.Name,
+									Input: []byte(strconv.Itoa(0)),
+								},
+							},
+						},
+					},
+				},
+			}
+
+		case *dtmbprotos.InboxAction_ActivityCompleted:
+			if len(item.Input) == 0 {
+				bgErrCh <- errors.New("orchestration has empty input")
+				return
+			}
+			idx, err := strconv.Atoi(string(item.Input))
+			if err != nil {
+				bgErrCh <- fmt.Errorf("failed parsing orchestration input '%s': %w", string(item.Input), err)
+				return
+			}
+
+			var action *dtmbprotos.OrchestratorAction
+			switch {
+			case idx >= 0 && idx < 5:
+				action = genActivityAction(idx + 1)
+			case idx == 5:
+				action = &dtmbprotos.OrchestratorAction{
+					OrchestratorActionType: &dtmbprotos.OrchestratorAction_CompleteOrchestration{
+						CompleteOrchestration: &dtmbprotos.CompleteOrchestrationOrchestratorAction{
+							OrchestrationStatus: dtmbprotos.OrchestrationStatus_COMPLETED,
+							Result:              item.Input,
+						},
+					},
+				}
+			default:
+				bgErrCh <- fmt.Errorf("invalid orchestration input index: %d", idx)
+				return
+			}
+
+			clientMessageChan <- &dtmbprotos.ConnectWorkerClientMessage{
+				Message: &dtmbprotos.ConnectWorkerClientMessage_CompleteOrchestration{
+					CompleteOrchestration: &dtmbprotos.CompleteOrchestrationMessage{
+						OrchestrationId: item.OrchestrationId,
+						Name:            item.Name,
+						Version:         item.Version,
+						CompletionToken: item.CompletionToken,
+						Actions:         []*dtmbprotos.OrchestratorAction{action},
+					},
+				},
+			}
+
+			if idx == 5 {
+				log.Printf("[%s] Orchestration completed with count: %d", testID, idx)
+			}
+		}
 	}
 
 	historyRequest := &dtmbprotos.GetOrchestrationHistoryRequest{
@@ -402,13 +406,23 @@ func (d dtmb) GetActivityWorkItem(context.Context) (*backend.ActivityWorkItem, e
 		return nil, backend.ErrNoWorkItems
 	}
 
+	// how do I map this to the backend.ActivityWorkItem?
+	_ = &dtmbprotos.ConnectWorkerClientMessage_CompleteActivity{
+		CompleteActivity: &dtmbprotos.CompleteActivityMessage{
+			OrchestrationId: item.OrchestrationId,
+			Name:            item.Name,
+			CompletionToken: item.CompletionToken,
+			Result:          item.Input,
+		},
+	}
+
 	ret = &backend.ActivityWorkItem{
-		InstanceID:     api.InstanceID(item.OrchestrationId.InstanceId),
-		SequenceNumber: int64(item.GetSequenceNumber()),
-		// NewEvent: ,
-		// Result: ,
-		// LockedBy: ,
-		// Properties: ,
+		SequenceNumber: 0,
+		InstanceID:     "",
+		NewEvent:       &protos.HistoryEvent{},
+		Result:         &protos.HistoryEvent{},
+		LockedBy:       "",
+		Properties:     map[string]interface{}{},
 	}
 	return ret, nil
 }
