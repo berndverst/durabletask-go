@@ -2,16 +2,14 @@ package dtmb
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
-	"strconv"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/microsoft/durabletask-go/api"
 	"github.com/microsoft/durabletask-go/backend"
-	"github.com/microsoft/durabletask-go/internal/protos"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
@@ -82,12 +80,12 @@ func NewDTMB(opts *DTMBOptions, logger backend.Logger) (*dtmb, error) {
 	return be, nil
 }
 
-type syncQueue[T dtmbprotos.ExecuteOrchestrationMessage | dtmbprotos.ExecuteActivityMessage] struct {
+type syncQueue[T dtmbprotos.ExecuteOrchestrationMessage | dtmbprotos.ExecuteActivityMessage | dtmbprotos.Event] struct {
 	lock  *sync.Mutex
 	items []*T
 }
 
-func NewSyncQueue[T dtmbprotos.ExecuteOrchestrationMessage | dtmbprotos.ExecuteActivityMessage]() syncQueue[T] {
+func NewSyncQueue[T dtmbprotos.ExecuteOrchestrationMessage | dtmbprotos.ExecuteActivityMessage | dtmbprotos.Event]() syncQueue[T] {
 	return syncQueue[T]{
 		lock:  &sync.Mutex{},
 		items: []*T{},
@@ -108,8 +106,53 @@ func (q *syncQueue[T]) Dequeue() *T {
 	}
 
 	item := q.items[0]
+	q.items[0] = nil // avoid a leak
 	q.items = q.items[1:]
 	return item
+}
+
+type eventChain struct {
+	hash   []byte
+	events syncQueue[dtmbprotos.Event]
+}
+
+func NewEventChain() *eventChain {
+	return &eventChain{
+		hash:   []byte{},
+		events: NewSyncQueue[dtmbprotos.Event](),
+	}
+}
+
+func (e *eventChain) AddEvent(event *dtmbprotos.Event) {
+	if string(e.hash) == string(event.GetEventHash()) {
+		return
+	}
+
+	e.events.Enqueue(event)
+	e.hash = event.EventHash
+}
+
+func (e *eventChain) AddMultipleEvents(events []*dtmbprotos.Event) {
+	// sort the events by sequence number before adding them
+	// sort using slices.SortFunc
+
+	slices.SortFunc(events, func(a *dtmbprotos.Event, b *dtmbprotos.Event) int {
+		if a.GetSequenceNumber() == b.GetSequenceNumber() {
+			return 0
+		} else {
+			if a.GetSequenceNumber() < b.GetSequenceNumber() {
+				return -1
+			} else {
+				return 1
+			}
+		}
+	})
+
+	// we assume the highest sequence number is the most recent event
+
+	for _, event := range events {
+		e.AddEvent(event)
+	}
 }
 
 // CreateTaskHub creates a new task hub for the current backend. Task hub creation must be idempotent.
@@ -197,17 +240,6 @@ func (d dtmb) connectWorker(ctx context.Context, orchestrators *[]string, activi
 		return fmt.Errorf("ping error: %w", err)
 	}
 
-	genActivityAction := func(idx int) *dtmbprotos.OrchestratorAction {
-		return &dtmbprotos.OrchestratorAction{
-			OrchestratorActionType: &dtmbprotos.OrchestratorAction_ScheduleActivity{
-				ScheduleActivity: &dtmbprotos.ScheduleActivityOrchestratorAction{
-					Name:  "count",
-					Input: []byte(strconv.Itoa(idx)),
-				},
-			},
-		}
-	}
-
 	// Execute messages in background
 	go func() {
 		for msg := range serverMessageChan {
@@ -256,6 +288,25 @@ func (d dtmb) AddNewOrchestrationEvent(context.Context, api.InstanceID, *backend
 	return fmt.Errorf("not implemented")
 }
 
+func (d dtmb) getCachedOrchestrationHistory(ctx context.Context, orchestrationID string, lastCachedItem string) (*dtmbprotos.GetOrchestrationHistoryResponse, error) {
+	res, err := d.workerClient.GetOrchestrationHistory(
+		ctx,
+		&dtmbprotos.GetOrchestrationHistoryRequest{
+			OrchestrationId: orchestrationID,
+			LastItem:        []byte(lastCachedItem),
+		},
+	)
+
+	// for a given orchestration ID we already have a series of cached events - we just need to add the newly fetched items
+	// map[orchestrationID] = [hash string, events slice]
+	// map[string][2]interface{}
+	// events := res.GetEvent()
+	// for _, event := range events {
+	// }
+
+	return res, err
+}
+
 // GetOrchestrationWorkItem gets a pending work item from the task hub or returns [ErrNoOrchWorkItems]
 // if there are no pending work items.
 func (d dtmb) GetOrchestrationWorkItem(ctx context.Context) (*backend.OrchestrationWorkItem, error) {
@@ -266,101 +317,9 @@ func (d dtmb) GetOrchestrationWorkItem(ctx context.Context) (*backend.Orchestrat
 		return nil, backend.ErrNoWorkItems
 	}
 
-	switch {
-	case item.Name == "counter" && item.Version == "v1":
-		switch item.Action.InboxActionType.(type) {
-		case *dtmbprotos.InboxAction_CreateOrchestration:
+	// TODO: complete this
 
-			// what to do here?
-			_ = &dtmbprotos.ConnectWorkerClientMessage_CompleteOrchestration{
-				CompleteOrchestration: &dtmbprotos.CompleteOrchestrationMessage{
-					OrchestrationId: item.OrchestrationId,
-					Name:            item.Name,
-					Version:         item.Version,
-					CompletionToken: item.CompletionToken,
-					CustomStatus:    "",
-					Actions: []*dtmbprotos.OrchestratorAction{
-						{
-							OrchestratorActionType: &dtmbprotos.OrchestratorAction_ScheduleActivity{
-								ScheduleActivity: &dtmbprotos.ScheduleActivityOrchestratorAction{
-									Name:  item.Name,
-									Input: []byte(strconv.Itoa(0)),
-								},
-							},
-						},
-					},
-				},
-			}
-
-		case *dtmbprotos.InboxAction_ActivityCompleted:
-			if len(item.Input) == 0 {
-				bgErrCh <- errors.New("orchestration has empty input")
-				return
-			}
-			idx, err := strconv.Atoi(string(item.Input))
-			if err != nil {
-				bgErrCh <- fmt.Errorf("failed parsing orchestration input '%s': %w", string(item.Input), err)
-				return
-			}
-
-			var action *dtmbprotos.OrchestratorAction
-			switch {
-			case idx >= 0 && idx < 5:
-				action = genActivityAction(idx + 1)
-			case idx == 5:
-				action = &dtmbprotos.OrchestratorAction{
-					OrchestratorActionType: &dtmbprotos.OrchestratorAction_CompleteOrchestration{
-						CompleteOrchestration: &dtmbprotos.CompleteOrchestrationOrchestratorAction{
-							OrchestrationStatus: dtmbprotos.OrchestrationStatus_COMPLETED,
-							Result:              item.Input,
-						},
-					},
-				}
-			default:
-				bgErrCh <- fmt.Errorf("invalid orchestration input index: %d", idx)
-				return
-			}
-
-			clientMessageChan <- &dtmbprotos.ConnectWorkerClientMessage{
-				Message: &dtmbprotos.ConnectWorkerClientMessage_CompleteOrchestration{
-					CompleteOrchestration: &dtmbprotos.CompleteOrchestrationMessage{
-						OrchestrationId: item.OrchestrationId,
-						Name:            item.Name,
-						Version:         item.Version,
-						CompletionToken: item.CompletionToken,
-						Actions:         []*dtmbprotos.OrchestratorAction{action},
-					},
-				},
-			}
-
-			if idx == 5 {
-				log.Printf("[%s] Orchestration completed with count: %d", testID, idx)
-			}
-		}
-	}
-
-	historyRequest := &dtmbprotos.GetOrchestrationHistoryRequest{
-		OrchestrationId: item.GetOrchestrationId(),
-		// LastItem --
-		// TODO: Do I need to implement caching of orchestration history?
-	}
-
-	historyResponse, err := d.workerClient.GetOrchestrationHistory(ctx, historyRequest)
-	if err != nil {
-		return nil, fmt.Errorf("error fetching orchestration history for orchestration id %s: %w", historyRequest.OrchestrationId, err)
-	}
-	historyResponse.Event[0].GetHistoryState()
-
-	ret = &backend.OrchestrationWorkItem{
-		InstanceID: api.InstanceID(item.OrchestrationId.InstanceId),
-		// State:      state,
-		// NewEvents: ,
-		// NewEvents
-		// LockedBy:   "",
-		// RetryCount: 0,
-		// State
-		// Properties: map[string]interface{}{},
-	}
+	ret = &backend.OrchestrationWorkItem{}
 	return ret, nil
 }
 
@@ -416,14 +375,11 @@ func (d dtmb) GetActivityWorkItem(context.Context) (*backend.ActivityWorkItem, e
 		},
 	}
 
-	ret = &backend.ActivityWorkItem{
-		SequenceNumber: 0,
-		InstanceID:     "",
-		NewEvent:       &protos.HistoryEvent{},
-		Result:         &protos.HistoryEvent{},
-		LockedBy:       "",
-		Properties:     map[string]interface{}{},
-	}
+	// TODO: Call Get History and complete the Activity Work Item
+
+	// Call Get History
+
+	ret = &backend.ActivityWorkItem{}
 	return ret, nil
 }
 
