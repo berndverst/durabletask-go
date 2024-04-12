@@ -9,7 +9,6 @@ import "google/protobuf/duration.proto";
 import "backend/v1/common.proto";
 import "backend/v1/events.proto";
 import "backend/v1/orchestrator-actions.proto";
-import "backend/v1/inbox-actions.proto";
 
 // Worker operations.
 service TaskHubWorker {
@@ -187,10 +186,8 @@ message ConnectWorkerServerMessage {
 // It contains certain configuration options for the worker.
 // This is sent in response to the first message from the worker on ConnectWorker.
 message WorkerConfiguration {
-    // ID of the connected instance
-    string instance_id = 1 [json_name = "instanceId"];
     // Maximum interval for the worker to send pings to the service.
-    google.protobuf.Duration health_check_interval = 2 [json_name = "healthCheckInterval"];
+    google.protobuf.Duration health_check_interval = 1 [json_name = "healthCheckInterval"];
 }
 
 // ExecuteOrchestrationMessage is one of the messages that can be sent by the server over ConnectWorker.
@@ -206,12 +203,9 @@ message ExecuteOrchestrationMessage {
     string version = 4;
     // Completion token.
     string completion_token = 5 [json_name = "completionToken"];
-    // Inbox action message.
-    InboxAction action = 10;
-    // Input data (optional).
-    bytes input = 11;
-    // Retry count.
-    uint32 retry_count = 20 [json_name = "retryCount"];
+    // New history entries, which have not been committed yet.
+    // This includes the action(s) to be executed, as well as the payload.
+    repeated Event new_events = 10 [json_name = "newEvents"];
 }
 
 // ExecuteActivityMessage is one of the messages that can be sent by the server over ConnectWorker.
@@ -246,9 +240,12 @@ message AbandonWorkItemsMessage {
 message GetOrchestrationHistoryRequest {
     // The unique ID of the orchestration instance.
     string orchestration_id = 1 [json_name = "orchestrationId"];
+    // Last sequence number of the item in the history stack that is cached on the worker.
+    // If this is empty or zero, returns the entire history.
+    uint64 last_item_sequence_number = 10 [json_name = "lastItemSequenceNumber"];
     // Hash of the last item in the history stack that is cached on the worker.
     // If this is empty, returns the entire history.
-    bytes last_item = 5 [json_name = "lastItem"];
+    bytes last_item_event_hash = 11 [json_name = "lastItemEventHash"];
 }
 
 // Response for GetOrchestrationHistory.

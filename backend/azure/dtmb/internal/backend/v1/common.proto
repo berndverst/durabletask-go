@@ -78,7 +78,7 @@ message ParentInstanceInfo {
     // The ID of the parent orchestration
     string orchestration_id = 1 [json_name = "orchestrationId"];
     // The ID of the parent's task responsible for creating this orchestration
-    uint32 sequence_number = 2 [json_name = "sequenceNumber"];
+    uint64 sequence_number = 2 [json_name = "sequenceNumber"];
     // Name of the orchestration
     string name = 12;
     // Version of the orchestration

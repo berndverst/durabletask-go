@@ -10,9 +10,9 @@ import "backend/v1/common.proto";
 
 // Event in the inbox and history stack
 message Event {
-    uint32 sequence_number = 1 [json_name = "sequenceNumber"];
+    uint64 sequence_number = 1 [json_name = "sequenceNumber"];
     google.protobuf.Timestamp timestamp = 2;
-    bytes event_hash = 3 [json_name = "hash"];
+    bytes event_hash = 3 [json_name = "eventHash"];
     oneof event_type {
         ExecutionStartedEvent execution_started = 100 [json_name = "executionStarted"];
         ExecutionCompletedEvent execution_completed = 101 [json_name = "executionCompleted"];
@@ -38,7 +38,6 @@ message Event {
 }
 
 // Event indicating the start of an orchestration execution for the first time
-// This can be an inbox event
 message ExecutionStartedEvent {
     // ID of the orchestration
     string orchestration_id = 1 [json_name = "orchestrationId"];
@@ -67,34 +66,30 @@ message ExecutionCompletedEvent {
 }
 
 // The orchestration was forcefully terminated by an API call
-// This can be an inbox event
 message ExecutionTerminatedEvent {
-    bytes input = 1;
+    string reason = 1;
     bool non_recursive = 2 [json_name = "nonRecursive"];
 }
 
 // The orchestrator has scheduled an activity work item.
-// This can be an inbox event (for activities)
 message ActivityScheduledEvent {
     string name = 1;
-    string version = 2;
+    //string version = 2;
     bytes input = 3;
     TraceContext parent_trace_context = 30 [json_name = "parentTraceContext"];
 }
 
 // A scheduled activity has completed successfully.
-// This can be an inbox event
 message ActivityCompletedEvent {
     // Sequence number of the event that scheduled this activity
-    uint32 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
+    uint64 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
     bytes result = 2;
 }
 
 // A scheduled activity has failed.
-// This can be an inbox event
 message ActivityFailedEvent {
     // Sequence number of the event that scheduled this activity
-    uint32 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
+    uint64 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
     FailureDetails failure_details = 2 [json_name = "failureDetails"];
 }
 
@@ -114,23 +109,20 @@ message SubOrchestrationInstanceCreatedEvent {
 }
 
 // A sub-orchestration has completed
-// This can be an inbox event
 message SubOrchestrationInstanceCompletedEvent {
     // Sequence number of the event that scheduled this activity
-    uint32 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
+    uint64 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
     bytes result = 2;
 }
 
 // A sub-orchestration has failed
-// This can be an inbox event
 message SubOrchestrationInstanceFailedEvent {
     // Sequence number of the event that scheduled this activity
-    uint32 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
+    uint64 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
     FailureDetails failure_details = 2 [json_name = "failureDetails"];
 }
 
 // The orchestrator scheduled a timer.
-// This can be an inbox event
 message TimerCreatedEvent {
     // Scheduled execution time for the timer
     google.protobuf.Timestamp execution_time = 5 [json_name = "executionTime"];
@@ -139,7 +131,7 @@ message TimerCreatedEvent {
 // A previously-scheduled timer has executed.
 message TimerExecutedEvent {
     // Sequence number of the event that scheduled this activity
-    uint32 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
+    uint64 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
 }
 
 // The orchestrator function is starting a new execution.
@@ -163,7 +155,6 @@ message EventSentEvent {
 }
 
 // An orchestration has received an event message
-// This can be an inbox event
 message EventRaisedEvent {
     // Event name
     string name = 2;
@@ -191,7 +182,6 @@ message ContinueAsNewEvent {
 }
 
 // Suspsends the orchestration
-// This can be an inbox event
 message ExecutionSuspendedEvent {
     // Optional payload of the event
     bytes input = 1;
@@ -199,7 +189,6 @@ message ExecutionSuspendedEvent {
 
 // Resumes the orchestration
 // Note that suspended orchestrations are still considered to be "running" even though they will not process events.
-// This can be an inbox event
 message ExecutionResumedEvent {
     // Optional payload of the event
     bytes input = 1;

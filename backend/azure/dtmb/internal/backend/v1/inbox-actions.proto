@@ -35,12 +35,12 @@ message CreateOrchestrationInboxAction {
 // A scheduled activity has completed successfully.
 message ActivityCompletedInboxAction {
     // Sequence number of the event that scheduled this activity
-    uint32 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
+    uint64 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
 }
 
 // A scheduled activity has failed.
 message ActivityFailedInboxAction {
     // Sequence number of the event that scheduled this activity
-    uint32 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
+    uint64 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
     FailureDetails failure_details = 2 [json_name = "failureDetails"];
 }

@@ -4,15 +4,15 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"slices"
-	"sync"
 	"time"
 
 	"github.com/microsoft/durabletask-go/api"
 	"github.com/microsoft/durabletask-go/backend"
+	"github.com/microsoft/durabletask-go/internal/protos"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	dtmbprotos "github.com/microsoft/durabletask-go/backend/azure/dtmb/internal/backend/v1"
 	"github.com/microsoft/durabletask-go/backend/azure/dtmb/internal/utils"
@@ -24,11 +24,12 @@ const (
 )
 
 type dtmb struct {
-	logger             backend.Logger
-	endpoint           string
-	options            *DTMBOptions
-	orchestrationQueue syncQueue[dtmbprotos.ExecuteOrchestrationMessage]
-	activityQueue      syncQueue[dtmbprotos.ExecuteActivityMessage]
+	logger                    backend.Logger
+	endpoint                  string
+	options                   *DTMBOptions
+	orchestrationQueue        utils.SyncQueue[dtmbprotos.ExecuteOrchestrationMessage]
+	activityQueue             utils.SyncQueue[dtmbprotos.ExecuteActivityMessage]
+	orchestrationHistoryCache utils.OrchestrationHistoryCache
 	// connection         *grpc.ClientConn
 	clientClient dtmbprotos.TaskHubClientClient
 	workerClient dtmbprotos.TaskHubWorkerClient
@@ -62,8 +63,10 @@ func NewDTMB(opts *DTMBOptions, logger backend.Logger) (*dtmb, error) {
 	be.endpoint = opts.Endpoint
 
 	// The following queues are used to store messages received from the server
-	be.orchestrationQueue = NewSyncQueue[dtmbprotos.ExecuteOrchestrationMessage]()
-	be.activityQueue = NewSyncQueue[dtmbprotos.ExecuteActivityMessage]()
+	be.orchestrationQueue = utils.NewSyncQueue[dtmbprotos.ExecuteOrchestrationMessage]()
+	be.activityQueue = utils.NewSyncQueue[dtmbprotos.ExecuteActivityMessage]()
+
+	be.orchestrationHistoryCache = utils.NewOrchestrationHistoryCache(nil) // TODO: make capacity configurable
 
 	ctx := context.Background()
 	connCtx, connCancel := context.WithTimeout(ctx, 15*time.Second) // TODO: make this a configurable timeout
@@ -80,85 +83,10 @@ func NewDTMB(opts *DTMBOptions, logger backend.Logger) (*dtmb, error) {
 	return be, nil
 }
 
-type syncQueue[T dtmbprotos.ExecuteOrchestrationMessage | dtmbprotos.ExecuteActivityMessage | dtmbprotos.Event] struct {
-	lock  *sync.Mutex
-	items []*T
-}
-
-func NewSyncQueue[T dtmbprotos.ExecuteOrchestrationMessage | dtmbprotos.ExecuteActivityMessage | dtmbprotos.Event]() syncQueue[T] {
-	return syncQueue[T]{
-		lock:  &sync.Mutex{},
-		items: []*T{},
-	}
-}
-
-func (q *syncQueue[T]) Enqueue(item *T) {
-	q.lock.Lock()
-	defer q.lock.Unlock()
-	q.items = append(q.items, item)
-}
-
-func (q *syncQueue[T]) Dequeue() *T {
-	q.lock.Lock()
-	defer q.lock.Unlock()
-	if len(q.items) == 0 {
-		return nil
-	}
-
-	item := q.items[0]
-	q.items[0] = nil // avoid a leak
-	q.items = q.items[1:]
-	return item
-}
-
-type eventChain struct {
-	hash   []byte
-	events syncQueue[dtmbprotos.Event]
-}
-
-func NewEventChain() *eventChain {
-	return &eventChain{
-		hash:   []byte{},
-		events: NewSyncQueue[dtmbprotos.Event](),
-	}
-}
-
-func (e *eventChain) AddEvent(event *dtmbprotos.Event) {
-	if string(e.hash) == string(event.GetEventHash()) {
-		return
-	}
-
-	e.events.Enqueue(event)
-	e.hash = event.EventHash
-}
-
-func (e *eventChain) AddMultipleEvents(events []*dtmbprotos.Event) {
-	// sort the events by sequence number before adding them
-	// sort using slices.SortFunc
-
-	slices.SortFunc(events, func(a *dtmbprotos.Event, b *dtmbprotos.Event) int {
-		if a.GetSequenceNumber() == b.GetSequenceNumber() {
-			return 0
-		} else {
-			if a.GetSequenceNumber() < b.GetSequenceNumber() {
-				return -1
-			} else {
-				return 1
-			}
-		}
-	})
-
-	// we assume the highest sequence number is the most recent event
-
-	for _, event := range events {
-		e.AddEvent(event)
-	}
-}
-
 // CreateTaskHub creates a new task hub for the current backend. Task hub creation must be idempotent.
 //
 // If the task hub for this backend already exists, an error of type [ErrTaskHubExists] is returned.
-func (d dtmb) CreateTaskHub(ctx context.Context) error {
+func (d *dtmb) CreateTaskHub(ctx context.Context) error {
 	_, err := d.clientClient.Metadata(ctx, &dtmbprotos.MetadataRequest{})
 	if err != nil {
 		return backend.ErrTaskHubNotFound
@@ -170,13 +98,13 @@ func (d dtmb) CreateTaskHub(ctx context.Context) error {
 // implementation to determine how the task hub data is deleted.
 //
 // If the task hub for this backend doesn't exist, an error of type [ErrTaskHubNotFound] is returned.
-func (d dtmb) DeleteTaskHub(context.Context) error {
+func (d *dtmb) DeleteTaskHub(context.Context) error {
 	// return not implemented error
 	return fmt.Errorf("not implemented")
 }
 
 // Start starts any background processing done by this backend.
-func (d dtmb) Start(ctx context.Context, orchestrators *[]string, activities *[]string) error {
+func (d *dtmb) Start(ctx context.Context, orchestrators *[]string, activities *[]string) error {
 	// TODO: is the context provided a background context or what?
 
 	err := d.connectWorker(ctx, orchestrators, activities)
@@ -187,7 +115,7 @@ func (d dtmb) Start(ctx context.Context, orchestrators *[]string, activities *[]
 	return nil
 }
 
-func (d dtmb) connectWorker(ctx context.Context, orchestrators *[]string, activities *[]string) error {
+func (d *dtmb) connectWorker(ctx context.Context, orchestrators *[]string, activities *[]string) error {
 	// Establish the ConnectWorker stream
 	worker := d.workerClient
 	var taskHubName string = "MAKE THIS CONFIGURABLE"
@@ -270,46 +198,178 @@ func (d dtmb) connectWorker(ctx context.Context, orchestrators *[]string, activi
 }
 
 // Stop stops any background processing done by this backend.
-func (d dtmb) Stop(context.Context) error {
+func (d *dtmb) Stop(context.Context) error {
 	// return not implemented error
 	return fmt.Errorf("not implemented")
 }
 
 // CreateOrchestrationInstance creates a new orchestration instance with a history event that
 // wraps a ExecutionStarted event.
-func (d dtmb) CreateOrchestrationInstance(context.Context, *backend.HistoryEvent) error {
+func (d *dtmb) CreateOrchestrationInstance(context.Context, *backend.HistoryEvent) error {
 	// return not implemented error
 	return fmt.Errorf("IMPLEMENTED")
 }
 
 // AddNewEvent adds a new orchestration event to the specified orchestration instance.
-func (d dtmb) AddNewOrchestrationEvent(context.Context, api.InstanceID, *backend.HistoryEvent) error {
+func (d *dtmb) AddNewOrchestrationEvent(context.Context, api.InstanceID, *backend.HistoryEvent) error {
 	// return not implemented error
 	return fmt.Errorf("not implemented")
 }
 
-func (d dtmb) getCachedOrchestrationHistory(ctx context.Context, orchestrationID string, lastCachedItem string) (*dtmbprotos.GetOrchestrationHistoryResponse, error) {
+func (d *dtmb) getOrchestrationHistory(ctx context.Context, orchestrationID string) ([]*dtmbprotos.Event, error) {
+	// look up cached history events and request the rest from the server
+	cachedEvents := d.orchestrationHistoryCache.GetCachedHistoryEventsForOrchestrationID(orchestrationID)
+
+	var historyRequest dtmbprotos.GetOrchestrationHistoryRequest
+	if cachedEvents == nil {
+		historyRequest = dtmbprotos.GetOrchestrationHistoryRequest{
+			OrchestrationId: orchestrationID,
+		}
+	} else {
+		historyRequest = dtmbprotos.GetOrchestrationHistoryRequest{
+			OrchestrationId:        orchestrationID,
+			LastItemSequenceNumber: cachedEvents[len(cachedEvents)-1].GetSequenceNumber(),
+			LastItemEventHash:      cachedEvents[len(cachedEvents)-1].GetEventHash(),
+		}
+	}
+
 	res, err := d.workerClient.GetOrchestrationHistory(
 		ctx,
-		&dtmbprotos.GetOrchestrationHistoryRequest{
-			OrchestrationId: orchestrationID,
-			LastItem:        []byte(lastCachedItem),
-		},
+		&historyRequest,
 	)
+	if err != nil {
+		return nil, err
+	}
 
-	// for a given orchestration ID we already have a series of cached events - we just need to add the newly fetched items
-	// map[orchestrationID] = [hash string, events slice]
-	// map[string][2]interface{}
-	// events := res.GetEvent()
-	// for _, event := range events {
-	// }
+	events := res.GetEvent()
 
-	return res, err
+	// cache the newly received events
+	d.orchestrationHistoryCache.AddHistoryEventsForOrchestrationID(orchestrationID, events)
+
+	if cachedEvents != nil {
+		// merge the sever events with the cached events
+		events = append(cachedEvents, events...)
+	}
+	return events, err
+}
+
+func convertEvent(event *dtmbprotos.Event) (*protos.HistoryEvent, error) {
+	switch typedEvent := event.GetEventType().(type) {
+	case *dtmbprotos.Event_ExecutionStarted:
+		return &protos.HistoryEvent{
+			EventId:   int32(event.GetSequenceNumber()), // is this correct?
+			Timestamp: event.GetTimestamp(),
+			EventType: &protos.HistoryEvent_ExecutionStarted{
+				ExecutionStarted: &protos.ExecutionStartedEvent{
+					Name:    typedEvent.ExecutionStarted.GetName(),
+					Version: &wrapperspb.StringValue{Value: typedEvent.ExecutionStarted.GetVersion()},
+					Input:   &wrapperspb.StringValue{Value: string(typedEvent.ExecutionStarted.GetInput())}, // what if this is not string
+					OrchestrationInstance: &protos.OrchestrationInstance{
+						InstanceId:  typedEvent.ExecutionStarted.GetOrchestrationId(),
+						ExecutionId: wrapperspb.String(typedEvent.ExecutionStarted.GetExecutionId()),
+					},
+					ParentInstance: &protos.ParentInstanceInfo{
+						TaskScheduledId: int32(typedEvent.ExecutionStarted.GetParent().GetSequenceNumber()),
+						Name:            &wrapperspb.StringValue{Value: typedEvent.ExecutionStarted.GetParent().GetName()},
+						Version:         &wrapperspb.StringValue{Value: typedEvent.ExecutionStarted.GetParent().GetVersion()},
+						OrchestrationInstance: &protos.OrchestrationInstance{
+							InstanceId: typedEvent.ExecutionStarted.GetParent().GetOrchestrationId(),
+						},
+					},
+					ScheduledStartTimestamp: typedEvent.ExecutionStarted.GetScheduledTime(),
+					ParentTraceContext: &protos.TraceContext{
+						TraceParent: typedEvent.ExecutionStarted.GetTraceContext().GetTraceParent(),
+						SpanID:      typedEvent.ExecutionStarted.GetTraceContext().GetSpanId(),
+						TraceState:  &wrapperspb.StringValue{Value: typedEvent.ExecutionStarted.GetTraceContext().GetTraceState()},
+					},
+					// TODO: Alessandro to implement tracing
+					// OrchestrationSpanID: &wrapperspb.StringValue{},
+				},
+			},
+		}, nil
+	case *dtmbprotos.Event_ExecutionCompleted:
+		return &protos.HistoryEvent{
+			EventId:   int32(event.GetSequenceNumber()), // is this correct?
+			Timestamp: event.GetTimestamp(),
+			EventType: &protos.HistoryEvent_ExecutionCompleted{
+				ExecutionCompleted: &protos.ExecutionCompletedEvent{
+					OrchestrationStatus: protos.OrchestrationStatus(typedEvent.ExecutionCompleted.GetOrchestrationStatus()),
+					Result:              &wrapperspb.StringValue{},
+					FailureDetails: &protos.TaskFailureDetails{
+						ErrorType:    typedEvent.ExecutionCompleted.GetFailureDetails().GetErrorType(),
+						ErrorMessage: typedEvent.ExecutionCompleted.GetFailureDetails().GetErrorMessage(),
+						StackTrace:   &wrapperspb.StringValue{Value: typedEvent.ExecutionCompleted.GetFailureDetails().GetStackTrace()},
+						InnerFailure: &protos.TaskFailureDetails{
+							ErrorType:      typedEvent.ExecutionCompleted.GetFailureDetails().GetInnerFailure().GetErrorType(),
+							ErrorMessage:   typedEvent.ExecutionCompleted.GetFailureDetails().GetInnerFailure().GetErrorMessage(),
+							StackTrace:     &wrapperspb.StringValue{Value: typedEvent.ExecutionCompleted.GetFailureDetails().GetInnerFailure().GetStackTrace()},
+							IsNonRetriable: typedEvent.ExecutionCompleted.GetFailureDetails().GetInnerFailure().GetRetriable(),
+						},
+						IsNonRetriable: typedEvent.ExecutionCompleted.GetFailureDetails().GetRetriable(),
+					},
+				},
+			},
+		}, nil
+	// 	return protos.EventType_ExecutionCompleted
+	// case dtmbprotos.Event_ExecutionFailed:
+	// 	return protos.EventType_ExecutionFailed
+	// case dtmbprotos.Event_ExecutionTerminated:
+	// 	return protos.EventType_ExecutionTerminated
+	// case dtmbprotos.Event_ExecutionContinuedAsNew:
+	// 	return protos.EventType_ExecutionContinuedAsNew
+	// case dtmbprotos.Event_ExecutionTimedOut:
+	// 	return protos.EventType_ExecutionTimedOut
+	// case dtmbprotos.Event_ExecutionEvent:
+	// 	return protos.EventType_ExecutionEvent
+	// case dtmbprotos.Event_ExecutionSubOrchestrationInstanceCreated:
+	// 	return protos.EventType_ExecutionSubOrchestrationInstanceCreated
+	// case dtmbprotos.Event_ExecutionSubOrchestrationInstanceCompleted:
+	// 	return protos.EventType_ExecutionSubOrchestrationInstanceCompleted
+	// case dtmbprotos.Event_ExecutionSubOrchestrationInstanceFailed:
+	// 	return protos.EventType_ExecutionSubOrchestrationInstanceFailed
+	// case dtmbprotos.Event_ExecutionSubOrchestrationInstanceTerminated:
+	// 	return protos.EventType_ExecutionSubOrchestrationInstanceTerminated
+	// case dtmbprotos.Event_ExecutionSubOrchestrationInstanceTimedOut:
+	// 	return protos.EventType_ExecutionSubOrchestrationInstanceTimedOut
+	// case dtmbprotos.Event_ExecutionSubOrchestrationInstanceEvent:
+	// 	return protos.EventType_ExecutionSubOrchestrationInstanceEvent
+	// case dtmbprotos.Event_ExecutionTaskScheduled:
+	// 	return protos.EventType_ExecutionTaskScheduled
+	// case dtmbprotos.Event_ExecutionTaskCompleted:
+	// 	return protos.EventType_ExecutionTaskCompleted
+	// case dtmbprotos.Event_ExecutionTaskFailed:
+	// 	return protos.EventType_ExecutionTaskFailed
+	// case dtmbprotos.Event_ExecutionTaskTimedOut:
+	// 	return protos.EventType_ExecutionTaskTimedOut
+	// case dtmbprotos.Event_ExecutionTaskCancelRequested:
+	// 	return protos.EventType_ExecutionTaskCancelRequested
+	// case dtmbprotos.Event_ExecutionTaskCanceled:
+	// 	return protos.EventType_ExecutionTaskCanceled
+	// case dtmbprotos.Event_ExecutionTaskRetryScheduled:
+	// 	return protos.EventType_ExecutionTaskRetryScheduled
+	default:
+		return nil, fmt.Errorf("unknown event type: %T", typedEvent)
+	}
+}
+
+func convertEvents(events []*dtmbprotos.Event) ([]*protos.HistoryEvent, error) {
+	// convert events from dtmbprotos.Event to protos.HistoryEvent
+
+	historyEvents := make([]*protos.HistoryEvent, len(events))
+
+	for i, item := range events {
+		convertedItem, err := convertEvent(item)
+		if err != nil {
+			return nil, err
+		}
+		historyEvents[i] = convertedItem
+	}
+	return historyEvents, nil
 }
 
 // GetOrchestrationWorkItem gets a pending work item from the task hub or returns [ErrNoOrchWorkItems]
 // if there are no pending work items.
-func (d dtmb) GetOrchestrationWorkItem(ctx context.Context) (*backend.OrchestrationWorkItem, error) {
+func (d *dtmb) GetOrchestrationWorkItem(ctx context.Context) (*backend.OrchestrationWorkItem, error) {
 	// return not implemented error
 	var ret *backend.OrchestrationWorkItem = nil
 	item := d.orchestrationQueue.Dequeue()
@@ -317,14 +377,29 @@ func (d dtmb) GetOrchestrationWorkItem(ctx context.Context) (*backend.Orchestrat
 		return nil, backend.ErrNoWorkItems
 	}
 
-	// TODO: complete this
+	cachedEvents, err := d.getOrchestrationHistory(ctx, item.OrchestrationId)
+	if err != nil {
+		return nil, err
+	}
 
-	ret = &backend.OrchestrationWorkItem{}
+	// combine cached events with new events yet to be executed
+	allEvents := append(cachedEvents, item.GetNewEvents()...)
+
+	convertedEvents, err := convertEvents(allEvents)
+	if err != nil {
+		return nil, err
+	}
+
+	ret = &backend.OrchestrationWorkItem{
+		InstanceID: api.InstanceID(item.OrchestrationId),
+		NewEvents:  convertedEvents,
+		// RetryCount: TODO: Alessandro to implement
+	}
 	return ret, nil
 }
 
 // GetOrchestrationRuntimeState gets the runtime state of an orchestration instance.
-func (d dtmb) GetOrchestrationRuntimeState(context.Context, *backend.OrchestrationWorkItem) (*backend.OrchestrationRuntimeState, error) {
+func (d *dtmb) GetOrchestrationRuntimeState(context.Context, *backend.OrchestrationWorkItem) (*backend.OrchestrationRuntimeState, error) {
 	// return not implemented error
 	return nil, fmt.Errorf("not implemented: can be done via get metadata")
 }
@@ -332,7 +407,7 @@ func (d dtmb) GetOrchestrationRuntimeState(context.Context, *backend.Orchestrati
 // GetOrchestrationMetadata gets the metadata associated with the given orchestration instance ID.
 //
 // Returns [api.ErrInstanceNotFound] if the orchestration instance doesn't exist.
-func (d dtmb) GetOrchestrationMetadata(context.Context, api.InstanceID) (*api.OrchestrationMetadata, error) {
+func (d *dtmb) GetOrchestrationMetadata(context.Context, api.InstanceID) (*api.OrchestrationMetadata, error) {
 	// return not implemented error
 	return nil, fmt.Errorf("not implemented: can be done via get metadata")
 }
@@ -340,7 +415,7 @@ func (d dtmb) GetOrchestrationMetadata(context.Context, api.InstanceID) (*api.Or
 // CompleteOrchestrationWorkItem completes a work item by saving the updated runtime state to durable storage.
 //
 // Returns [ErrWorkItemLockLost] if the work-item couldn't be completed due to a lock-lost conflict (e.g., split-brain).
-func (d dtmb) CompleteOrchestrationWorkItem(context.Context, *backend.OrchestrationWorkItem) error {
+func (d *dtmb) CompleteOrchestrationWorkItem(context.Context, *backend.OrchestrationWorkItem) error {
 	// return not implemented error
 	return fmt.Errorf("not implemented")
 }
@@ -350,14 +425,14 @@ func (d dtmb) CompleteOrchestrationWorkItem(context.Context, *backend.Orchestrat
 // This is called if an internal failure happens in the processing of an orchestration work item. It is
 // not called if the orchestration work item is processed successfully (note that an orchestration that
 // completes with a failure is still considered a successfully processed work item).
-func (d dtmb) AbandonOrchestrationWorkItem(context.Context, *backend.OrchestrationWorkItem) error {
+func (d *dtmb) AbandonOrchestrationWorkItem(context.Context, *backend.OrchestrationWorkItem) error {
 	// return not implemented error
 	return fmt.Errorf("not implemented")
 }
 
 // GetActivityWorkItem gets a pending activity work item from the task hub or returns [ErrNoWorkItems]
 // if there are no pending activity work items.
-func (d dtmb) GetActivityWorkItem(context.Context) (*backend.ActivityWorkItem, error) {
+func (d *dtmb) GetActivityWorkItem(context.Context) (*backend.ActivityWorkItem, error) {
 	// return not implemented error
 	var ret *backend.ActivityWorkItem = nil
 	item := d.activityQueue.Dequeue()
@@ -365,28 +440,27 @@ func (d dtmb) GetActivityWorkItem(context.Context) (*backend.ActivityWorkItem, e
 		return nil, backend.ErrNoWorkItems
 	}
 
-	// how do I map this to the backend.ActivityWorkItem?
-	_ = &dtmbprotos.ConnectWorkerClientMessage_CompleteActivity{
-		CompleteActivity: &dtmbprotos.CompleteActivityMessage{
-			OrchestrationId: item.OrchestrationId,
-			Name:            item.Name,
-			CompletionToken: item.CompletionToken,
-			Result:          item.Input,
+	inputEvent := protos.HistoryEvent{
+		EventType: &protos.HistoryEvent_TaskScheduled{
+			TaskScheduled: &protos.TaskScheduledEvent{
+				Name:  item.Name,
+				Input: wrapperspb.String(string(item.Input)), // TODO: What if this is not a string?
+				// ParentTraceContext: TODO: Alessandro to implement
+			},
 		},
 	}
 
-	// TODO: Call Get History and complete the Activity Work Item
-
-	// Call Get History
-
-	ret = &backend.ActivityWorkItem{}
+	ret = &backend.ActivityWorkItem{
+		InstanceID: api.InstanceID(item.OrchestrationId),
+		NewEvent:   &inputEvent,
+	}
 	return ret, nil
 }
 
 // CompleteActivityWorkItem sends a message to the parent orchestration indicating activity completion.
 //
 // Returns [ErrWorkItemLockLost] if the work-item couldn't be completed due to a lock-lost conflict (e.g., split-brain).
-func (d dtmb) CompleteActivityWorkItem(context.Context, *backend.ActivityWorkItem) error {
+func (d *dtmb) CompleteActivityWorkItem(context.Context, *backend.ActivityWorkItem) error {
 	// return not implemented error
 	return fmt.Errorf("not implemented")
 }
@@ -394,7 +468,7 @@ func (d dtmb) CompleteActivityWorkItem(context.Context, *backend.ActivityWorkIte
 // AbandonActivityWorkItem returns the work-item back to the queue without committing any other chances.
 //
 // This is called when an internal failure occurs during activity work-item processing.
-func (d dtmb) AbandonActivityWorkItem(context.Context, *backend.ActivityWorkItem) error {
+func (d *dtmb) AbandonActivityWorkItem(context.Context, *backend.ActivityWorkItem) error {
 	// return not implemented error
 	return fmt.Errorf("not implemented")
 }
@@ -403,7 +477,7 @@ func (d dtmb) AbandonActivityWorkItem(context.Context, *backend.ActivityWorkItem
 //
 // [api.ErrInstanceNotFound] is returned if the specified orchestration instance doesn't exist.
 // [api.ErrNotCompleted] is returned if the specified orchestration instance is still running.
-func (d dtmb) PurgeOrchestrationState(context.Context, api.InstanceID) error {
+func (d *dtmb) PurgeOrchestrationState(context.Context, api.InstanceID) error {
 	// return not implemented error
 	return fmt.Errorf("not implemented")
 }
