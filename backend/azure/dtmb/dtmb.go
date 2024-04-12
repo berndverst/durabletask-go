@@ -253,120 +253,6 @@ func (d *dtmb) getOrchestrationHistory(ctx context.Context, orchestrationID stri
 	return events, err
 }
 
-func convertEvent(event *dtmbprotos.Event) (*protos.HistoryEvent, error) {
-	switch typedEvent := event.GetEventType().(type) {
-	case *dtmbprotos.Event_ExecutionStarted:
-		return &protos.HistoryEvent{
-			EventId:   int32(event.GetSequenceNumber()), // is this correct?
-			Timestamp: event.GetTimestamp(),
-			EventType: &protos.HistoryEvent_ExecutionStarted{
-				ExecutionStarted: &protos.ExecutionStartedEvent{
-					Name:    typedEvent.ExecutionStarted.GetName(),
-					Version: &wrapperspb.StringValue{Value: typedEvent.ExecutionStarted.GetVersion()},
-					Input:   &wrapperspb.StringValue{Value: string(typedEvent.ExecutionStarted.GetInput())}, // what if this is not string
-					OrchestrationInstance: &protos.OrchestrationInstance{
-						InstanceId:  typedEvent.ExecutionStarted.GetOrchestrationId(),
-						ExecutionId: wrapperspb.String(typedEvent.ExecutionStarted.GetExecutionId()),
-					},
-					ParentInstance: &protos.ParentInstanceInfo{
-						TaskScheduledId: int32(typedEvent.ExecutionStarted.GetParent().GetSequenceNumber()),
-						Name:            &wrapperspb.StringValue{Value: typedEvent.ExecutionStarted.GetParent().GetName()},
-						Version:         &wrapperspb.StringValue{Value: typedEvent.ExecutionStarted.GetParent().GetVersion()},
-						OrchestrationInstance: &protos.OrchestrationInstance{
-							InstanceId: typedEvent.ExecutionStarted.GetParent().GetOrchestrationId(),
-						},
-					},
-					ScheduledStartTimestamp: typedEvent.ExecutionStarted.GetScheduledTime(),
-					ParentTraceContext: &protos.TraceContext{
-						TraceParent: typedEvent.ExecutionStarted.GetTraceContext().GetTraceParent(),
-						SpanID:      typedEvent.ExecutionStarted.GetTraceContext().GetSpanId(),
-						TraceState:  &wrapperspb.StringValue{Value: typedEvent.ExecutionStarted.GetTraceContext().GetTraceState()},
-					},
-					// TODO: Alessandro to implement tracing
-					// OrchestrationSpanID: &wrapperspb.StringValue{},
-				},
-			},
-		}, nil
-	case *dtmbprotos.Event_ExecutionCompleted:
-		return &protos.HistoryEvent{
-			EventId:   int32(event.GetSequenceNumber()), // is this correct?
-			Timestamp: event.GetTimestamp(),
-			EventType: &protos.HistoryEvent_ExecutionCompleted{
-				ExecutionCompleted: &protos.ExecutionCompletedEvent{
-					OrchestrationStatus: protos.OrchestrationStatus(typedEvent.ExecutionCompleted.GetOrchestrationStatus()),
-					Result:              &wrapperspb.StringValue{},
-					FailureDetails: &protos.TaskFailureDetails{
-						ErrorType:    typedEvent.ExecutionCompleted.GetFailureDetails().GetErrorType(),
-						ErrorMessage: typedEvent.ExecutionCompleted.GetFailureDetails().GetErrorMessage(),
-						StackTrace:   &wrapperspb.StringValue{Value: typedEvent.ExecutionCompleted.GetFailureDetails().GetStackTrace()},
-						InnerFailure: &protos.TaskFailureDetails{
-							ErrorType:      typedEvent.ExecutionCompleted.GetFailureDetails().GetInnerFailure().GetErrorType(),
-							ErrorMessage:   typedEvent.ExecutionCompleted.GetFailureDetails().GetInnerFailure().GetErrorMessage(),
-							StackTrace:     &wrapperspb.StringValue{Value: typedEvent.ExecutionCompleted.GetFailureDetails().GetInnerFailure().GetStackTrace()},
-							IsNonRetriable: typedEvent.ExecutionCompleted.GetFailureDetails().GetInnerFailure().GetRetriable(),
-						},
-						IsNonRetriable: typedEvent.ExecutionCompleted.GetFailureDetails().GetRetriable(),
-					},
-				},
-			},
-		}, nil
-	// 	return protos.EventType_ExecutionCompleted
-	// case dtmbprotos.Event_ExecutionFailed:
-	// 	return protos.EventType_ExecutionFailed
-	// case dtmbprotos.Event_ExecutionTerminated:
-	// 	return protos.EventType_ExecutionTerminated
-	// case dtmbprotos.Event_ExecutionContinuedAsNew:
-	// 	return protos.EventType_ExecutionContinuedAsNew
-	// case dtmbprotos.Event_ExecutionTimedOut:
-	// 	return protos.EventType_ExecutionTimedOut
-	// case dtmbprotos.Event_ExecutionEvent:
-	// 	return protos.EventType_ExecutionEvent
-	// case dtmbprotos.Event_ExecutionSubOrchestrationInstanceCreated:
-	// 	return protos.EventType_ExecutionSubOrchestrationInstanceCreated
-	// case dtmbprotos.Event_ExecutionSubOrchestrationInstanceCompleted:
-	// 	return protos.EventType_ExecutionSubOrchestrationInstanceCompleted
-	// case dtmbprotos.Event_ExecutionSubOrchestrationInstanceFailed:
-	// 	return protos.EventType_ExecutionSubOrchestrationInstanceFailed
-	// case dtmbprotos.Event_ExecutionSubOrchestrationInstanceTerminated:
-	// 	return protos.EventType_ExecutionSubOrchestrationInstanceTerminated
-	// case dtmbprotos.Event_ExecutionSubOrchestrationInstanceTimedOut:
-	// 	return protos.EventType_ExecutionSubOrchestrationInstanceTimedOut
-	// case dtmbprotos.Event_ExecutionSubOrchestrationInstanceEvent:
-	// 	return protos.EventType_ExecutionSubOrchestrationInstanceEvent
-	// case dtmbprotos.Event_ExecutionTaskScheduled:
-	// 	return protos.EventType_ExecutionTaskScheduled
-	// case dtmbprotos.Event_ExecutionTaskCompleted:
-	// 	return protos.EventType_ExecutionTaskCompleted
-	// case dtmbprotos.Event_ExecutionTaskFailed:
-	// 	return protos.EventType_ExecutionTaskFailed
-	// case dtmbprotos.Event_ExecutionTaskTimedOut:
-	// 	return protos.EventType_ExecutionTaskTimedOut
-	// case dtmbprotos.Event_ExecutionTaskCancelRequested:
-	// 	return protos.EventType_ExecutionTaskCancelRequested
-	// case dtmbprotos.Event_ExecutionTaskCanceled:
-	// 	return protos.EventType_ExecutionTaskCanceled
-	// case dtmbprotos.Event_ExecutionTaskRetryScheduled:
-	// 	return protos.EventType_ExecutionTaskRetryScheduled
-	default:
-		return nil, fmt.Errorf("unknown event type: %T", typedEvent)
-	}
-}
-
-func convertEvents(events []*dtmbprotos.Event) ([]*protos.HistoryEvent, error) {
-	// convert events from dtmbprotos.Event to protos.HistoryEvent
-
-	historyEvents := make([]*protos.HistoryEvent, len(events))
-
-	for i, item := range events {
-		convertedItem, err := convertEvent(item)
-		if err != nil {
-			return nil, err
-		}
-		historyEvents[i] = convertedItem
-	}
-	return historyEvents, nil
-}
-
 // GetOrchestrationWorkItem gets a pending work item from the task hub or returns [ErrNoOrchWorkItems]
 // if there are no pending work items.
 func (d *dtmb) GetOrchestrationWorkItem(ctx context.Context) (*backend.OrchestrationWorkItem, error) {
@@ -385,7 +271,7 @@ func (d *dtmb) GetOrchestrationWorkItem(ctx context.Context) (*backend.Orchestra
 	// combine cached events with new events yet to be executed
 	allEvents := append(cachedEvents, item.GetNewEvents()...)
 
-	convertedEvents, err := convertEvents(allEvents)
+	convertedEvents, err := utils.ConvertEvents(allEvents)
 	if err != nil {
 		return nil, err
 	}
