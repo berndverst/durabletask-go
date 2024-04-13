@@ -512,6 +512,62 @@ func (x *ParentInstanceInfo) GetVersion() string {
 	return ""
 }
 
+// Message used to encode the result and failure details internally
+type ResultData struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Result         []byte          `protobuf:"bytes,1,opt,name=result,proto3" json:"result,omitempty"`
+	FailureDetails *FailureDetails `protobuf:"bytes,2,opt,name=failure_details,json=failureDetails,proto3" json:"failure_details,omitempty"`
+}
+
+func (x *ResultData) Reset() {
+	*x = ResultData{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_backend_v1_common_proto_msgTypes[6]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *ResultData) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResultData) ProtoMessage() {}
+
+func (x *ResultData) ProtoReflect() protoreflect.Message {
+	mi := &file_backend_v1_common_proto_msgTypes[6]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResultData.ProtoReflect.Descriptor instead.
+func (*ResultData) Descriptor() ([]byte, []int) {
+	return file_backend_v1_common_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *ResultData) GetResult() []byte {
+	if x != nil {
+		return x.Result
+	}
+	return nil
+}
+
+func (x *ResultData) GetFailureDetails() *FailureDetails {
+	if x != nil {
+		return x.FailureDetails
+	}
+	return nil
+}
+
 var File_backend_v1_common_proto protoreflect.FileDescriptor
 
 var file_backend_v1_common_proto_rawDesc = []byte{
@@ -569,7 +625,14 @@ var file_backend_v1_common_proto_rawDesc = []byte{
 	0x62, 0x65, 0x72, 0x12, 0x12, 0x0a, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x18, 0x0c, 0x20, 0x01, 0x28,
 	0x09, 0x52, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x12, 0x18, 0x0a, 0x07, 0x76, 0x65, 0x72, 0x73, 0x69,
 	0x6f, 0x6e, 0x18, 0x0d, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6f,
-	0x6e, 0x2a, 0x9a, 0x01, 0x0a, 0x13, 0x4f, 0x72, 0x63, 0x68, 0x65, 0x73, 0x74, 0x72, 0x61, 0x74,
+	0x6e, 0x22, 0x6e, 0x0a, 0x0a, 0x52, 0x65, 0x73, 0x75, 0x6c, 0x74, 0x44, 0x61, 0x74, 0x61, 0x12,
+	0x16, 0x0a, 0x06, 0x72, 0x65, 0x73, 0x75, 0x6c, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0c, 0x52,
+	0x06, 0x72, 0x65, 0x73, 0x75, 0x6c, 0x74, 0x12, 0x48, 0x0a, 0x0f, 0x66, 0x61, 0x69, 0x6c, 0x75,
+	0x72, 0x65, 0x5f, 0x64, 0x65, 0x74, 0x61, 0x69, 0x6c, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b,
+	0x32, 0x1f, 0x2e, 0x64, 0x74, 0x6d, 0x62, 0x2e, 0x62, 0x61, 0x63, 0x6b, 0x65, 0x6e, 0x64, 0x2e,
+	0x76, 0x31, 0x2e, 0x46, 0x61, 0x69, 0x6c, 0x75, 0x72, 0x65, 0x44, 0x65, 0x74, 0x61, 0x69, 0x6c,
+	0x73, 0x52, 0x0e, 0x66, 0x61, 0x69, 0x6c, 0x75, 0x72, 0x65, 0x44, 0x65, 0x74, 0x61, 0x69, 0x6c,
+	0x73, 0x2a, 0x9a, 0x01, 0x0a, 0x13, 0x4f, 0x72, 0x63, 0x68, 0x65, 0x73, 0x74, 0x72, 0x61, 0x74,
 	0x69, 0x6f, 0x6e, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x12, 0x0b, 0x0a, 0x07, 0x55, 0x4e, 0x4b,
 	0x4e, 0x4f, 0x57, 0x4e, 0x10, 0x00, 0x12, 0x0b, 0x0a, 0x07, 0x50, 0x45, 0x4e, 0x44, 0x49, 0x4e,
 	0x47, 0x10, 0x01, 0x12, 0x0b, 0x0a, 0x07, 0x52, 0x55, 0x4e, 0x4e, 0x49, 0x4e, 0x47, 0x10, 0x02,
@@ -601,7 +664,7 @@ func file_backend_v1_common_proto_rawDescGZIP() []byte {
 }
 
 var file_backend_v1_common_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_backend_v1_common_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_backend_v1_common_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_backend_v1_common_proto_goTypes = []interface{}{
 	(OrchestrationStatus)(0),      // 0: dtmb.backend.v1.OrchestrationStatus
 	(*MetadataRequest)(nil),       // 1: dtmb.backend.v1.MetadataRequest
@@ -610,19 +673,21 @@ var file_backend_v1_common_proto_goTypes = []interface{}{
 	(*Delay)(nil),                 // 4: dtmb.backend.v1.Delay
 	(*FailureDetails)(nil),        // 5: dtmb.backend.v1.FailureDetails
 	(*ParentInstanceInfo)(nil),    // 6: dtmb.backend.v1.ParentInstanceInfo
-	(*timestamppb.Timestamp)(nil), // 7: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),   // 8: google.protobuf.Duration
+	(*ResultData)(nil),            // 7: dtmb.backend.v1.ResultData
+	(*timestamppb.Timestamp)(nil), // 8: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),   // 9: google.protobuf.Duration
 }
 var file_backend_v1_common_proto_depIdxs = []int32{
-	7, // 0: dtmb.backend.v1.Delay.time:type_name -> google.protobuf.Timestamp
-	8, // 1: dtmb.backend.v1.Delay.delay:type_name -> google.protobuf.Duration
+	8, // 0: dtmb.backend.v1.Delay.time:type_name -> google.protobuf.Timestamp
+	9, // 1: dtmb.backend.v1.Delay.delay:type_name -> google.protobuf.Duration
 	5, // 2: dtmb.backend.v1.FailureDetails.inner_failure:type_name -> dtmb.backend.v1.FailureDetails
 	4, // 3: dtmb.backend.v1.FailureDetails.retry_delay:type_name -> dtmb.backend.v1.Delay
-	4, // [4:4] is the sub-list for method output_type
-	4, // [4:4] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	5, // 4: dtmb.backend.v1.ResultData.failure_details:type_name -> dtmb.backend.v1.FailureDetails
+	5, // [5:5] is the sub-list for method output_type
+	5, // [5:5] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_backend_v1_common_proto_init() }
@@ -703,6 +768,18 @@ func file_backend_v1_common_proto_init() {
 				return nil
 			}
 		}
+		file_backend_v1_common_proto_msgTypes[6].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*ResultData); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
 	}
 	file_backend_v1_common_proto_msgTypes[3].OneofWrappers = []interface{}{
 		(*Delay_Time)(nil),
@@ -714,7 +791,7 @@ func file_backend_v1_common_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_backend_v1_common_proto_rawDesc,
 			NumEnums:      1,
-			NumMessages:   6,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -206,6 +206,8 @@ message ExecuteOrchestrationMessage {
     // New history entries, which have not been committed yet.
     // This includes the action(s) to be executed, as well as the payload.
     repeated Event new_events = 10 [json_name = "newEvents"];
+    // Retry count.
+    uint32 retry_count = 20 [json_name = "retryCount"];
 }
 
 // ExecuteActivityMessage is one of the messages that can be sent by the server over ConnectWorker.

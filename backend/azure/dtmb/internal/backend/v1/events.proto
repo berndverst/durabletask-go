@@ -62,12 +62,13 @@ message ExecutionStartedEvent {
 message ExecutionCompletedEvent {
     OrchestrationStatus orchestration_status = 1 [json_name = "orchestrationStatus"];
     bytes result = 2;
+    // Set on failed executions
     FailureDetails failure_details = 3 [json_name = "failureDetails"];
 }
 
 // The orchestration was forcefully terminated by an API call
 message ExecutionTerminatedEvent {
-    string reason = 1;
+    bytes reason = 1;
     bool non_recursive = 2 [json_name = "nonRecursive"];
 }
 
@@ -90,7 +91,8 @@ message ActivityCompletedEvent {
 message ActivityFailedEvent {
     // Sequence number of the event that scheduled this activity
     uint64 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
-    FailureDetails failure_details = 2 [json_name = "failureDetails"];
+    bytes result = 2;
+    FailureDetails failure_details = 3 [json_name = "failureDetails"];
 }
 
 // The orchestrator has scheduled a sub-orchestration.
@@ -119,7 +121,8 @@ message SubOrchestrationInstanceCompletedEvent {
 message SubOrchestrationInstanceFailedEvent {
     // Sequence number of the event that scheduled this activity
     uint64 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
-    FailureDetails failure_details = 2 [json_name = "failureDetails"];
+    bytes result = 2;
+    FailureDetails failure_details = 3 [json_name = "failureDetails"];
 }
 
 // The orchestrator scheduled a timer.

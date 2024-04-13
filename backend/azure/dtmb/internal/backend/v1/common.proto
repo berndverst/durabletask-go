@@ -84,3 +84,9 @@ message ParentInstanceInfo {
     // Version of the orchestration
     string version = 13;
 }
+
+// Message used to encode the result and failure details internally
+message ResultData {
+    bytes result = 1;
+    FailureDetails failure_details = 2 [json_name = "failureDetails"];
+}

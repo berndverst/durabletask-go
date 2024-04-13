@@ -72,5 +72,5 @@ message CompleteOrchestrationOrchestratorAction {
 message TerminateOrchestrationOrchestratorAction {
     bool non_recursive = 3 [json_name = "nonRecursive"];
     // Optional reason
-    string reason = 10;
+    bytes reason = 10;
 }
