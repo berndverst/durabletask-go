@@ -31,8 +31,9 @@ type dtmb struct {
 	activityQueue             utils.SyncQueue[dtmbprotos.ExecuteActivityMessage]
 	orchestrationHistoryCache utils.OrchestrationHistoryCache
 	// connection         *grpc.ClientConn
-	clientClient dtmbprotos.TaskHubClientClient
-	workerClient dtmbprotos.TaskHubWorkerClient
+	clientClient     dtmbprotos.TaskHubClientClient
+	workerClient     dtmbprotos.TaskHubWorkerClient
+	workerCancelFunc context.CancelFunc
 }
 
 type DTMBOptions struct {
@@ -99,15 +100,17 @@ func (d *dtmb) CreateTaskHub(ctx context.Context) error {
 //
 // If the task hub for this backend doesn't exist, an error of type [ErrTaskHubNotFound] is returned.
 func (d *dtmb) DeleteTaskHub(context.Context) error {
-	// return not implemented error
-	return fmt.Errorf("not implemented")
+	return fmt.Errorf("the TaskHub cannot be deleted via the API. Please delete the TaskHub manually")
 }
 
 // Start starts any background processing done by this backend.
 func (d *dtmb) Start(ctx context.Context, orchestrators *[]string, activities *[]string) error {
-	// TODO: is the context provided a background context or what?
+	// TODO: is the context provided a background context?
 
-	err := d.connectWorker(ctx, orchestrators, activities)
+	ctxWithCancel, cancel := context.WithCancel(ctx)
+	d.workerCancelFunc = cancel
+
+	err := d.connectWorker(ctxWithCancel, orchestrators, activities)
 	if err != nil {
 		return err
 	}
@@ -198,22 +201,40 @@ func (d *dtmb) connectWorker(ctx context.Context, orchestrators *[]string, activ
 }
 
 // Stop stops any background processing done by this backend.
-func (d *dtmb) Stop(context.Context) error {
-	// return not implemented error
-	return fmt.Errorf("not implemented")
+func (d *dtmb) Stop(ctx context.Context) error {
+	// new messages are no longer received from the server, but existing received messages are still available to be processed from memory
+	d.workerCancelFunc()
+	return nil
 }
 
 // CreateOrchestrationInstance creates a new orchestration instance with a history event that
 // wraps a ExecutionStarted event.
-func (d *dtmb) CreateOrchestrationInstance(context.Context, *backend.HistoryEvent) error {
-	// return not implemented error
-	return fmt.Errorf("IMPLEMENTED")
+func (d *dtmb) CreateOrchestrationInstance(ctx context.Context, event *backend.HistoryEvent) error {
+	executionStartedEvent := event.GetExecutionStarted()
+
+	_, err := d.clientClient.CreateOrchestration(ctx, &dtmbprotos.CreateOrchestrationRequest{
+		OrchestrationId: executionStartedEvent.GetOrchestrationInstance().GetInstanceId(),
+		Name:            executionStartedEvent.GetName(),
+		Version:         executionStartedEvent.GetVersion().GetValue(),
+		Input:           []byte(executionStartedEvent.GetInput().GetValue()),
+		StartAt: &dtmbprotos.Delay{
+			Delayed: &dtmbprotos.Delay_Time{
+				Time: executionStartedEvent.GetScheduledStartTimestamp(),
+			},
+		},
+		IdReusePolicy: &dtmbprotos.OrchestrationIDReusePolicy{ // is this correct?
+			RuntimeStatus: []dtmbprotos.OrchestrationStatus{},
+			Action:        dtmbprotos.OrchestrationIDReusePolicy_ERROR, // this is the default value
+		},
+	})
+
+	return err
 }
 
 // AddNewEvent adds a new orchestration event to the specified orchestration instance.
 func (d *dtmb) AddNewOrchestrationEvent(context.Context, api.InstanceID, *backend.HistoryEvent) error {
 	// return not implemented error
-	return fmt.Errorf("not implemented")
+	return fmt.Errorf("not implemented in protos")
 }
 
 func (d *dtmb) getOrchestrationHistory(ctx context.Context, orchestrationID string) ([]*dtmbprotos.Event, error) {
@@ -253,7 +274,7 @@ func (d *dtmb) getOrchestrationHistory(ctx context.Context, orchestrationID stri
 	return events, err
 }
 
-// GetOrchestrationWorkItem gets a pending work item from the task hub or returns [ErrNoOrchWorkItems]
+// GetOrchestrationWorkItem gets a pending work item from the task hub or returns [ErrNoWorkItems]
 // if there are no pending work items.
 func (d *dtmb) GetOrchestrationWorkItem(ctx context.Context) (*backend.OrchestrationWorkItem, error) {
 	// return not implemented error
@@ -276,6 +297,10 @@ func (d *dtmb) GetOrchestrationWorkItem(ctx context.Context) (*backend.Orchestra
 		return nil, err
 	}
 
+	if len(convertedEvents) == 0 {
+		return nil, backend.ErrNoWorkItems
+	}
+
 	ret = &backend.OrchestrationWorkItem{
 		InstanceID: api.InstanceID(item.OrchestrationId),
 		NewEvents:  convertedEvents,
@@ -285,17 +310,47 @@ func (d *dtmb) GetOrchestrationWorkItem(ctx context.Context) (*backend.Orchestra
 }
 
 // GetOrchestrationRuntimeState gets the runtime state of an orchestration instance.
-func (d *dtmb) GetOrchestrationRuntimeState(context.Context, *backend.OrchestrationWorkItem) (*backend.OrchestrationRuntimeState, error) {
-	// return not implemented error
-	return nil, fmt.Errorf("not implemented: can be done via get metadata")
+func (d *dtmb) GetOrchestrationRuntimeState(ctx context.Context, workitem *backend.OrchestrationWorkItem) (*backend.OrchestrationRuntimeState, error) {
+	// TODO: Does this even apply to DTMB?
+	resp, err := d.clientClient.GetOrchestration(ctx, &dtmbprotos.GetOrchestrationRequest{
+		OrchestrationId: string(workitem.InstanceID),
+		NoPayloads:      true, // TODO: Check this is right
+	})
+
+	ret := &backend.OrchestrationRuntimeState{
+		CustomStatus: &wrapperspb.StringValue{
+			Value: resp.GetCustomStatus(),
+		},
+	}
+
+	return ret, err
 }
 
 // GetOrchestrationMetadata gets the metadata associated with the given orchestration instance ID.
 //
 // Returns [api.ErrInstanceNotFound] if the orchestration instance doesn't exist.
-func (d *dtmb) GetOrchestrationMetadata(context.Context, api.InstanceID) (*api.OrchestrationMetadata, error) {
-	// return not implemented error
-	return nil, fmt.Errorf("not implemented: can be done via get metadata")
+func (d *dtmb) GetOrchestrationMetadata(ctx context.Context, id api.InstanceID) (*api.OrchestrationMetadata, error) {
+	resp, err := d.clientClient.GetOrchestration(ctx, &dtmbprotos.GetOrchestrationRequest{
+		OrchestrationId: string(id),
+		NoPayloads:      false, // TODO: Check this is right
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	ret := &api.OrchestrationMetadata{
+		InstanceID:             id,
+		Name:                   resp.Name,
+		RuntimeStatus:          protos.OrchestrationStatus(resp.GetOrchestrationStatus()),
+		CreatedAt:              resp.GetCreatedAt().AsTime(),
+		LastUpdatedAt:          resp.GetLastUpdatedAt().AsTime(),
+		SerializedInput:        string(resp.GetInput()),
+		SerializedOutput:       string(resp.GetOutput()),
+		SerializedCustomStatus: string(resp.GetCustomStatus()),
+		FailureDetails:         utils.ConvertFailureDetails(resp.GetFailureDetails()),
+	}
+
+	return ret, nil
 }
 
 // CompleteOrchestrationWorkItem completes a work item by saving the updated runtime state to durable storage.
@@ -303,7 +358,7 @@ func (d *dtmb) GetOrchestrationMetadata(context.Context, api.InstanceID) (*api.O
 // Returns [ErrWorkItemLockLost] if the work-item couldn't be completed due to a lock-lost conflict (e.g., split-brain).
 func (d *dtmb) CompleteOrchestrationWorkItem(context.Context, *backend.OrchestrationWorkItem) error {
 	// return not implemented error
-	return fmt.Errorf("not implemented")
+	return fmt.Errorf("not implemented in protos")
 }
 
 // AbandonOrchestrationWorkItem undoes any state changes and returns the work item to the work item queue.
@@ -363,7 +418,13 @@ func (d *dtmb) AbandonActivityWorkItem(context.Context, *backend.ActivityWorkIte
 //
 // [api.ErrInstanceNotFound] is returned if the specified orchestration instance doesn't exist.
 // [api.ErrNotCompleted] is returned if the specified orchestration instance is still running.
-func (d *dtmb) PurgeOrchestrationState(context.Context, api.InstanceID) error {
-	// return not implemented error
-	return fmt.Errorf("not implemented")
+func (d *dtmb) PurgeOrchestrationState(ctx context.Context, id api.InstanceID) error {
+	_, err := d.clientClient.PurgeOrchestration(ctx, &dtmbprotos.PurgeOrchestrationRequest{
+		Request:      &dtmbprotos.PurgeOrchestrationRequest_OrchestrationId{OrchestrationId: string(id)},
+		NonRecursive: false, // TODO: Should this be globally configurable?
+	})
+
+	// TODO: Check if the error is ErrInstanceNotFound or ErrNotCompleted
+
+	return err
 }
