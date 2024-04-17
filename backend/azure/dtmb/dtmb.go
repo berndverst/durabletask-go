@@ -212,7 +212,7 @@ func (d *dtmb) Stop(ctx context.Context) error {
 func (d *dtmb) CreateOrchestrationInstance(ctx context.Context, event *backend.HistoryEvent) error {
 	executionStartedEvent := event.GetExecutionStarted()
 	if executionStartedEvent == nil {
-		return fmt.Errorf("expected an ExecutionStarted event, but got %v", event.GetEventType().String())
+		return fmt.Errorf("expected an ExecutionStarted event, but got %v", event.GetEventType())
 	}
 
 	_, err := d.clientClient.CreateOrchestration(ctx, &dtmbprotos.CreateOrchestrationRequest{
@@ -249,6 +249,8 @@ func (d *dtmb) AddNewOrchestrationEvent(ctx context.Context, id api.InstanceID, 
 		_, err = d.clientClient.RaiseEvent(context.Background(), &req)
 
 	case *protos.HistoryEvent_ExecutionTerminated:
+		// this is a terminal event, so we can evict the cache
+		d.orchestrationHistoryCache.EvictCacheForOrchestrationID(string(id))
 		err = fmt.Errorf("not implemented in protos")
 	case *protos.HistoryEvent_ExecutionResumed:
 		err = fmt.Errorf("not implemented in protos")
@@ -392,6 +394,8 @@ func (d *dtmb) CompleteOrchestrationWorkItem(_ context.Context, item *backend.Or
 			},
 		},
 	}
+	// this is a terminal event, so we can evict the cache
+	d.orchestrationHistoryCache.EvictCacheForOrchestrationID(string(item.InstanceID))
 	return nil
 }
 
@@ -411,6 +415,8 @@ func (d *dtmb) AbandonOrchestrationWorkItem(_ context.Context, item *backend.Orc
 			},
 		},
 	}
+	// this is a terminal event, so we can evict the cache
+	d.orchestrationHistoryCache.EvictCacheForOrchestrationID(string(item.InstanceID))
 	return nil
 }
 
