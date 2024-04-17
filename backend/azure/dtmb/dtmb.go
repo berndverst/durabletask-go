@@ -30,10 +30,10 @@ type dtmb struct {
 	orchestrationQueue        utils.SyncQueue[dtmbprotos.ExecuteOrchestrationMessage]
 	activityQueue             utils.SyncQueue[dtmbprotos.ExecuteActivityMessage]
 	orchestrationHistoryCache utils.OrchestrationHistoryCache
-	// connection         *grpc.ClientConn
-	clientClient     dtmbprotos.TaskHubClientClient
-	workerClient     dtmbprotos.TaskHubWorkerClient
-	workerCancelFunc context.CancelFunc
+	connectWorkerClientStream chan *dtmbprotos.ConnectWorkerClientMessage
+	clientClient              dtmbprotos.TaskHubClientClient
+	workerClient              dtmbprotos.TaskHubWorkerClient
+	workerCancelFunc          context.CancelFunc
 }
 
 type DTMBOptions struct {
@@ -126,7 +126,7 @@ func (d *dtmb) connectWorker(ctx context.Context, orchestrators *[]string, activ
 
 	readyCh := make(chan struct{})
 	bgErrCh := make(chan error)
-	clientMessageChan := make(chan *dtmbprotos.ConnectWorkerClientMessage)
+	d.connectWorkerClientStream = make(chan *dtmbprotos.ConnectWorkerClientMessage)
 	serverMessageChan := make(chan *dtmbprotos.ConnectWorkerServerMessage)
 
 	var orchestratorFnList utils.OrchestratorFnList = *orchestrators
@@ -142,7 +142,7 @@ func (d *dtmb) connectWorker(ctx context.Context, orchestrators *[]string, activ
 			orchestratorFnList,
 			activityFnList,
 			serverMessageChan,
-			clientMessageChan,
+			d.connectWorkerClientStream,
 			func() {
 				close(readyCh)
 			},
@@ -211,6 +211,9 @@ func (d *dtmb) Stop(ctx context.Context) error {
 // wraps a ExecutionStarted event.
 func (d *dtmb) CreateOrchestrationInstance(ctx context.Context, event *backend.HistoryEvent) error {
 	executionStartedEvent := event.GetExecutionStarted()
+	if executionStartedEvent == nil {
+		return fmt.Errorf("expected an ExecutionStarted event, but got %v", event.GetEventType().String())
+	}
 
 	_, err := d.clientClient.CreateOrchestration(ctx, &dtmbprotos.CreateOrchestrationRequest{
 		OrchestrationId: executionStartedEvent.GetOrchestrationInstance().GetInstanceId(),
@@ -232,9 +235,30 @@ func (d *dtmb) CreateOrchestrationInstance(ctx context.Context, event *backend.H
 }
 
 // AddNewEvent adds a new orchestration event to the specified orchestration instance.
-func (d *dtmb) AddNewOrchestrationEvent(context.Context, api.InstanceID, *backend.HistoryEvent) error {
-	// return not implemented error
-	return fmt.Errorf("not implemented in protos")
+func (d *dtmb) AddNewOrchestrationEvent(ctx context.Context, id api.InstanceID, event *backend.HistoryEvent) error {
+	var err error
+	switch typedEvent := event.GetEventType().(type) {
+	case *protos.HistoryEvent_EventRaised:
+
+		req := dtmbprotos.RaiseEventRequest{
+			OrchestrationId: string(id),
+			Name:            typedEvent.EventRaised.GetName(),
+			Input:           []byte(typedEvent.EventRaised.GetInput().GetValue()),
+		}
+
+		_, err = d.clientClient.RaiseEvent(context.Background(), &req)
+
+	case *protos.HistoryEvent_ExecutionTerminated:
+		err = fmt.Errorf("not implemented in protos")
+	case *protos.HistoryEvent_ExecutionResumed:
+		err = fmt.Errorf("not implemented in protos")
+	case *protos.HistoryEvent_ExecutionSuspended:
+		err = fmt.Errorf("not implemented in protos")
+	default:
+		err = fmt.Errorf("unsupported event type in AddNewOrchestrationEvent: %v", event.GetEventType())
+	}
+
+	return err
 }
 
 func (d *dtmb) getOrchestrationHistory(ctx context.Context, orchestrationID string) ([]*dtmbprotos.Event, error) {
@@ -277,7 +301,6 @@ func (d *dtmb) getOrchestrationHistory(ctx context.Context, orchestrationID stri
 // GetOrchestrationWorkItem gets a pending work item from the task hub or returns [ErrNoWorkItems]
 // if there are no pending work items.
 func (d *dtmb) GetOrchestrationWorkItem(ctx context.Context) (*backend.OrchestrationWorkItem, error) {
-	// return not implemented error
 	var ret *backend.OrchestrationWorkItem = nil
 	item := d.orchestrationQueue.Dequeue()
 	if item == nil {
@@ -356,9 +379,20 @@ func (d *dtmb) GetOrchestrationMetadata(ctx context.Context, id api.InstanceID) 
 // CompleteOrchestrationWorkItem completes a work item by saving the updated runtime state to durable storage.
 //
 // Returns [ErrWorkItemLockLost] if the work-item couldn't be completed due to a lock-lost conflict (e.g., split-brain).
-func (d *dtmb) CompleteOrchestrationWorkItem(context.Context, *backend.OrchestrationWorkItem) error {
-	// return not implemented error
-	return fmt.Errorf("not implemented in protos")
+func (d *dtmb) CompleteOrchestrationWorkItem(_ context.Context, item *backend.OrchestrationWorkItem) error {
+	d.connectWorkerClientStream <- &dtmbprotos.ConnectWorkerClientMessage{
+		Message: &dtmbprotos.ConnectWorkerClientMessage_CompleteOrchestration{
+			CompleteOrchestration: &dtmbprotos.CompleteOrchestrationMessage{
+				OrchestrationId: string(item.InstanceID),
+				Name:            "", // what do I put here?
+				Version:         "", // what do I put here?
+				CompletionToken: "", // what do I put here?
+				CustomStatus:    item.State.CustomStatus.GetValue(),
+				Actions:         nil, // // what do I put here?
+			},
+		},
+	}
+	return nil
 }
 
 // AbandonOrchestrationWorkItem undoes any state changes and returns the work item to the work item queue.
@@ -366,15 +400,23 @@ func (d *dtmb) CompleteOrchestrationWorkItem(context.Context, *backend.Orchestra
 // This is called if an internal failure happens in the processing of an orchestration work item. It is
 // not called if the orchestration work item is processed successfully (note that an orchestration that
 // completes with a failure is still considered a successfully processed work item).
-func (d *dtmb) AbandonOrchestrationWorkItem(context.Context, *backend.OrchestrationWorkItem) error {
-	// return not implemented error
-	return fmt.Errorf("not implemented")
+func (d *dtmb) AbandonOrchestrationWorkItem(_ context.Context, item *backend.OrchestrationWorkItem) error {
+	d.connectWorkerClientStream <- &dtmbprotos.ConnectWorkerClientMessage{
+		Message: &dtmbprotos.ConnectWorkerClientMessage_AbandonOrchestration{
+			AbandonOrchestration: &dtmbprotos.AbandonOrchestrationMessage{
+				OrchestrationId: string(item.InstanceID),
+				Name:            "", // what do I put here?
+				Version:         "", // what do I put here?
+				CompletionToken: "", // what do I put here?
+			},
+		},
+	}
+	return nil
 }
 
 // GetActivityWorkItem gets a pending activity work item from the task hub or returns [ErrNoWorkItems]
 // if there are no pending activity work items.
 func (d *dtmb) GetActivityWorkItem(context.Context) (*backend.ActivityWorkItem, error) {
-	// return not implemented error
 	var ret *backend.ActivityWorkItem = nil
 	item := d.activityQueue.Dequeue()
 	if item == nil {
@@ -401,17 +443,35 @@ func (d *dtmb) GetActivityWorkItem(context.Context) (*backend.ActivityWorkItem, 
 // CompleteActivityWorkItem sends a message to the parent orchestration indicating activity completion.
 //
 // Returns [ErrWorkItemLockLost] if the work-item couldn't be completed due to a lock-lost conflict (e.g., split-brain).
-func (d *dtmb) CompleteActivityWorkItem(context.Context, *backend.ActivityWorkItem) error {
-	// return not implemented error
-	return fmt.Errorf("not implemented")
+func (d *dtmb) CompleteActivityWorkItem(_ context.Context, item *backend.ActivityWorkItem) error {
+	d.connectWorkerClientStream <- &dtmbprotos.ConnectWorkerClientMessage{
+		Message: &dtmbprotos.ConnectWorkerClientMessage_CompleteActivity{
+			CompleteActivity: &dtmbprotos.CompleteActivityMessage{
+				OrchestrationId: string(item.InstanceID),
+				Name:            "",                           // what do I put here?
+				CompletionToken: "",                           // what do I put here?
+				Result:          nil,                          // what do I put here?,
+				FailureDetails:  &dtmbprotos.FailureDetails{}, // which failures go here?
+			},
+		},
+	}
+	return nil
 }
 
 // AbandonActivityWorkItem returns the work-item back to the queue without committing any other chances.
 //
 // This is called when an internal failure occurs during activity work-item processing.
-func (d *dtmb) AbandonActivityWorkItem(context.Context, *backend.ActivityWorkItem) error {
-	// return not implemented error
-	return fmt.Errorf("not implemented")
+func (d *dtmb) AbandonActivityWorkItem(_ context.Context, item *backend.ActivityWorkItem) error {
+	d.connectWorkerClientStream <- &dtmbprotos.ConnectWorkerClientMessage{
+		Message: &dtmbprotos.ConnectWorkerClientMessage_AbandonActivity{
+			AbandonActivity: &dtmbprotos.AbandonActivityMessage{
+				OrchestrationId: string(item.InstanceID),
+				Name:            "", // how do I get the name?,
+				CompletionToken: "", // what do I put here?
+			},
+		},
+	}
+	return nil
 }
 
 // PurgeOrchestrationState deletes all saved state for the specified orchestration instance.
