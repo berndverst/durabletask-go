@@ -214,16 +214,11 @@ func (d *dtmb) CreateOrchestrationInstance(ctx context.Context, event *backend.H
 		return fmt.Errorf("expected an ExecutionStarted event, but got %v", event.GetEventType())
 	}
 
-	inputEvent, err := backend.MarshalHistoryEvent(event)
-	if err != nil {
-		return err
-	}
-
-	_, err = d.clientClient.CreateOrchestration(ctx, &dtmbprotos.CreateOrchestrationRequest{
+	_, err := d.clientClient.CreateOrchestration(ctx, &dtmbprotos.CreateOrchestrationRequest{
 		OrchestrationId: executionStartedEvent.GetOrchestrationInstance().GetInstanceId(),
 		Name:            executionStartedEvent.GetName(),
 		Version:         executionStartedEvent.GetVersion().GetValue(),
-		Input:           inputEvent,
+		Input:           []byte(executionStartedEvent.GetName()),
 		StartAt: &dtmbprotos.Delay{
 			Delayed: &dtmbprotos.Delay_Time{
 				Time: executionStartedEvent.GetScheduledStartTimestamp(),
@@ -244,15 +239,10 @@ func (d *dtmb) AddNewOrchestrationEvent(ctx context.Context, id api.InstanceID, 
 	switch typedEvent := event.GetEventType().(type) {
 	case *protos.HistoryEvent_EventRaised:
 
-		serializedEvent, err := backend.MarshalHistoryEvent(event)
-		if err != nil {
-			return err
-		}
-
 		req := dtmbprotos.RaiseEventRequest{
 			OrchestrationId: string(id),
 			Name:            typedEvent.EventRaised.GetName(),
-			Input:           serializedEvent, // is this the correct value?
+			Input:           []byte(typedEvent.EventRaised.GetInput().GetValue()), // or should this be backend.MarshalHistoryEvent(event)?
 		}
 
 		_, err = d.clientClient.RaiseEvent(context.Background(), &req)
@@ -451,7 +441,7 @@ func (d *dtmb) GetActivityWorkItem(context.Context) (*backend.ActivityWorkItem, 
 		return nil, backend.ErrNoWorkItems
 	}
 
-	// is GetInput() a serialized history event? Or what exactly is this?
+	// is ExecuteActivitMessage.GetInput() a serialized history event? Or what exactly is this?
 
 	historyEvent, err := backend.UnmarshalHistoryEvent(item.GetInput())
 	if err != nil {
