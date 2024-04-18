@@ -61,7 +61,7 @@ func ConnectWorker(
 	go func() {
 		msg, err := stream.Recv()
 		if err != nil {
-			configReceived <- err
+			configReceived <- fmt.Errorf("error receiving initial message: %w", err)
 			return
 		}
 
