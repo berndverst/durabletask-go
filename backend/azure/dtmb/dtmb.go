@@ -100,7 +100,7 @@ func (d *dtmb) CreateTaskHub(ctx context.Context) error {
 //
 // If the task hub for this backend doesn't exist, an error of type [ErrTaskHubNotFound] is returned.
 func (d *dtmb) DeleteTaskHub(context.Context) error {
-	return fmt.Errorf("the TaskHub cannot be deleted via the API. Please delete the TaskHub manually")
+	return errors.New("the TaskHub cannot be deleted using this SDK; please perform this operation on the service")
 }
 
 // Start starts any background processing done by this backend.
