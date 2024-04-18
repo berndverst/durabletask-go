@@ -23,6 +23,20 @@ func ConvertFailureDetails(failureDetails *dtmbprotos.FailureDetails) *protos.Ta
 	}
 }
 
+func ConvertTaskFailureDetails(taskFailureDetails *protos.TaskFailureDetails) *dtmbprotos.FailureDetails {
+	if taskFailureDetails == nil {
+		return nil
+	}
+
+	return &dtmbprotos.FailureDetails{
+		ErrorType:    taskFailureDetails.GetErrorType(),
+		ErrorMessage: taskFailureDetails.GetErrorMessage(),
+		StackTrace:   taskFailureDetails.GetStackTrace().GetValue(),
+		InnerFailure: ConvertTaskFailureDetails(taskFailureDetails.GetInnerFailure()),
+		Retriable:    !taskFailureDetails.GetIsNonRetriable(),
+	}
+}
+
 func ConvertEvent(event *dtmbprotos.Event) (*protos.HistoryEvent, error) {
 	switch typedEvent := event.GetEventType().(type) {
 	case *dtmbprotos.Event_ExecutionStarted:

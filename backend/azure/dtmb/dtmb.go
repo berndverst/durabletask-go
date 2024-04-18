@@ -12,7 +12,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	dtmbprotos "github.com/microsoft/durabletask-go/backend/azure/dtmb/internal/backend/v1"
 	"github.com/microsoft/durabletask-go/backend/azure/dtmb/internal/utils"
@@ -215,19 +214,24 @@ func (d *dtmb) CreateOrchestrationInstance(ctx context.Context, event *backend.H
 		return fmt.Errorf("expected an ExecutionStarted event, but got %v", event.GetEventType())
 	}
 
-	_, err := d.clientClient.CreateOrchestration(ctx, &dtmbprotos.CreateOrchestrationRequest{
+	inputEvent, err := backend.MarshalHistoryEvent(event)
+	if err != nil {
+		return err
+	}
+
+	_, err = d.clientClient.CreateOrchestration(ctx, &dtmbprotos.CreateOrchestrationRequest{
 		OrchestrationId: executionStartedEvent.GetOrchestrationInstance().GetInstanceId(),
 		Name:            executionStartedEvent.GetName(),
 		Version:         executionStartedEvent.GetVersion().GetValue(),
-		Input:           []byte(executionStartedEvent.GetInput().GetValue()),
+		Input:           inputEvent,
 		StartAt: &dtmbprotos.Delay{
 			Delayed: &dtmbprotos.Delay_Time{
 				Time: executionStartedEvent.GetScheduledStartTimestamp(),
 			},
 		},
 		IdReusePolicy: &dtmbprotos.OrchestrationIDReusePolicy{ // is this correct?
-			RuntimeStatus: []dtmbprotos.OrchestrationStatus{},
-			Action:        dtmbprotos.OrchestrationIDReusePolicy_ERROR, // this is the default value
+			RuntimeStatus: nil, // []dtmbprotos.OrchestrationStatus{}, // what do I put here?
+			// Action:        dtmbprotos.OrchestrationIDReusePolicy_ERROR, // this is the default value
 		},
 	})
 
@@ -240,10 +244,15 @@ func (d *dtmb) AddNewOrchestrationEvent(ctx context.Context, id api.InstanceID, 
 	switch typedEvent := event.GetEventType().(type) {
 	case *protos.HistoryEvent_EventRaised:
 
+		serializedEvent, err := backend.MarshalHistoryEvent(event)
+		if err != nil {
+			return err
+		}
+
 		req := dtmbprotos.RaiseEventRequest{
 			OrchestrationId: string(id),
 			Name:            typedEvent.EventRaised.GetName(),
-			Input:           []byte(typedEvent.EventRaised.GetInput().GetValue()),
+			Input:           serializedEvent, // is this the correct value?
 		}
 
 		_, err = d.clientClient.RaiseEvent(context.Background(), &req)
@@ -327,28 +336,33 @@ func (d *dtmb) GetOrchestrationWorkItem(ctx context.Context) (*backend.Orchestra
 	}
 
 	ret = &backend.OrchestrationWorkItem{
-		InstanceID: api.InstanceID(item.OrchestrationId),
+		InstanceID: api.InstanceID(item.GetOrchestrationId()),
 		NewEvents:  convertedEvents,
+		RetryCount: int32(item.GetRetryCount()),
 		// RetryCount: TODO: Alessandro to implement
+		Properties: map[string]interface{}{
+			"CompletionToken":   item.GetCompletionToken(),
+			"OrchestrationName": item.GetName(),
+			"Version":           item.GetVersion(),
+			"ExecutionId":       item.GetExecutionId(),
+		},
 	}
 	return ret, nil
 }
 
 // GetOrchestrationRuntimeState gets the runtime state of an orchestration instance.
 func (d *dtmb) GetOrchestrationRuntimeState(ctx context.Context, workitem *backend.OrchestrationWorkItem) (*backend.OrchestrationRuntimeState, error) {
-	// TODO: Does this even apply to DTMB?
-	resp, err := d.clientClient.GetOrchestration(ctx, &dtmbprotos.GetOrchestrationRequest{
-		OrchestrationId: string(workitem.InstanceID),
-		NoPayloads:      true, // TODO: Check this is right
-	})
-
-	ret := &backend.OrchestrationRuntimeState{
-		CustomStatus: &wrapperspb.StringValue{
-			Value: resp.GetCustomStatus(),
-		},
+	events, err := d.getOrchestrationHistory(ctx, string(workitem.InstanceID))
+	if err != nil {
+		return nil, err
+	}
+	historyEvents, err := utils.ConvertEvents(events)
+	if err != nil {
+		return nil, err
 	}
 
-	return ret, err
+	state := backend.NewOrchestrationRuntimeState(workitem.InstanceID, historyEvents)
+	return state, nil
 }
 
 // GetOrchestrationMetadata gets the metadata associated with the given orchestration instance ID.
@@ -357,7 +371,7 @@ func (d *dtmb) GetOrchestrationRuntimeState(ctx context.Context, workitem *backe
 func (d *dtmb) GetOrchestrationMetadata(ctx context.Context, id api.InstanceID) (*api.OrchestrationMetadata, error) {
 	resp, err := d.clientClient.GetOrchestration(ctx, &dtmbprotos.GetOrchestrationRequest{
 		OrchestrationId: string(id),
-		NoPayloads:      false, // TODO: Check this is right
+		NoPayloads:      false,
 	})
 	if err != nil {
 		return nil, err
@@ -382,13 +396,17 @@ func (d *dtmb) GetOrchestrationMetadata(ctx context.Context, id api.InstanceID) 
 //
 // Returns [ErrWorkItemLockLost] if the work-item couldn't be completed due to a lock-lost conflict (e.g., split-brain).
 func (d *dtmb) CompleteOrchestrationWorkItem(_ context.Context, item *backend.OrchestrationWorkItem) error {
+	completionToken := item.Properties["CompletionToken"].(string)
+	orchestrationName := item.Properties["OrchestrationName"].(string)
+	version := item.Properties["Version"].(string)
+
 	d.connectWorkerClientStream <- &dtmbprotos.ConnectWorkerClientMessage{
 		Message: &dtmbprotos.ConnectWorkerClientMessage_CompleteOrchestration{
 			CompleteOrchestration: &dtmbprotos.CompleteOrchestrationMessage{
 				OrchestrationId: string(item.InstanceID),
-				Name:            "", // what do I put here?
-				Version:         "", // what do I put here?
-				CompletionToken: "", // what do I put here?
+				Name:            orchestrationName,
+				Version:         version,
+				CompletionToken: completionToken,
 				CustomStatus:    item.State.CustomStatus.GetValue(),
 				Actions:         nil, // // what do I put here?
 			},
@@ -405,13 +423,17 @@ func (d *dtmb) CompleteOrchestrationWorkItem(_ context.Context, item *backend.Or
 // not called if the orchestration work item is processed successfully (note that an orchestration that
 // completes with a failure is still considered a successfully processed work item).
 func (d *dtmb) AbandonOrchestrationWorkItem(_ context.Context, item *backend.OrchestrationWorkItem) error {
+	completionToken := item.Properties["CompletionToken"].(string)
+	orchestrationName := item.Properties["OrchestrationName"].(string)
+	version := item.Properties["Version"].(string)
+
 	d.connectWorkerClientStream <- &dtmbprotos.ConnectWorkerClientMessage{
 		Message: &dtmbprotos.ConnectWorkerClientMessage_AbandonOrchestration{
 			AbandonOrchestration: &dtmbprotos.AbandonOrchestrationMessage{
 				OrchestrationId: string(item.InstanceID),
-				Name:            "", // what do I put here?
-				Version:         "", // what do I put here?
-				CompletionToken: "", // what do I put here?
+				Name:            orchestrationName,
+				Version:         version,
+				CompletionToken: completionToken,
 			},
 		},
 	}
@@ -429,19 +451,21 @@ func (d *dtmb) GetActivityWorkItem(context.Context) (*backend.ActivityWorkItem, 
 		return nil, backend.ErrNoWorkItems
 	}
 
-	inputEvent := protos.HistoryEvent{
-		EventType: &protos.HistoryEvent_TaskScheduled{
-			TaskScheduled: &protos.TaskScheduledEvent{
-				Name:  item.Name,
-				Input: wrapperspb.String(string(item.Input)), // TODO: What if this is not a string?
-				// ParentTraceContext: TODO: Alessandro to implement
-			},
-		},
+	// is GetInput() a serialized history event? Or what exactly is this?
+
+	historyEvent, err := backend.UnmarshalHistoryEvent(item.GetInput())
+	if err != nil {
+		return nil, err
 	}
 
 	ret = &backend.ActivityWorkItem{
-		InstanceID: api.InstanceID(item.OrchestrationId),
-		NewEvent:   &inputEvent,
+		SequenceNumber: int64(historyEvent.EventId),
+		InstanceID:     api.InstanceID(item.OrchestrationId),
+		NewEvent:       historyEvent,
+		Properties: map[string]interface{}{
+			"CompletionToken": item.GetCompletionToken(),
+			"ActivityName":    item.GetName(),
+		},
 	}
 	return ret, nil
 }
@@ -450,14 +474,26 @@ func (d *dtmb) GetActivityWorkItem(context.Context) (*backend.ActivityWorkItem, 
 //
 // Returns [ErrWorkItemLockLost] if the work-item couldn't be completed due to a lock-lost conflict (e.g., split-brain).
 func (d *dtmb) CompleteActivityWorkItem(_ context.Context, item *backend.ActivityWorkItem) error {
+	bytes, err := backend.MarshalHistoryEvent(item.Result)
+	if err != nil {
+		return err
+	}
+	var failureDetails *dtmbprotos.FailureDetails = nil
+	if item.NewEvent.GetTaskFailed() != nil {
+		failureDetails = utils.ConvertTaskFailureDetails(item.NewEvent.GetTaskFailed().GetFailureDetails())
+	}
+
+	completionToken := item.Properties["CompletionToken"].(string)
+	activityName := item.Properties["ActivityName"].(string)
+
 	d.connectWorkerClientStream <- &dtmbprotos.ConnectWorkerClientMessage{
 		Message: &dtmbprotos.ConnectWorkerClientMessage_CompleteActivity{
 			CompleteActivity: &dtmbprotos.CompleteActivityMessage{
 				OrchestrationId: string(item.InstanceID),
-				Name:            "",                           // what do I put here?
-				CompletionToken: "",                           // what do I put here?
-				Result:          nil,                          // what do I put here?,
-				FailureDetails:  &dtmbprotos.FailureDetails{}, // which failures go here?
+				Name:            activityName,    // what do I put here?
+				CompletionToken: completionToken, // what do I put here?
+				Result:          bytes,           // is this correct?
+				FailureDetails:  failureDetails,  // which failures go here?
 			},
 		},
 	}
@@ -468,12 +504,15 @@ func (d *dtmb) CompleteActivityWorkItem(_ context.Context, item *backend.Activit
 //
 // This is called when an internal failure occurs during activity work-item processing.
 func (d *dtmb) AbandonActivityWorkItem(_ context.Context, item *backend.ActivityWorkItem) error {
+	completionToken := item.Properties["CompletionToken"].(string)
+	activityName := item.Properties["ActivityName"].(string)
+
 	d.connectWorkerClientStream <- &dtmbprotos.ConnectWorkerClientMessage{
 		Message: &dtmbprotos.ConnectWorkerClientMessage_AbandonActivity{
 			AbandonActivity: &dtmbprotos.AbandonActivityMessage{
 				OrchestrationId: string(item.InstanceID),
-				Name:            "", // how do I get the name?,
-				CompletionToken: "", // what do I put here?
+				Name:            activityName,
+				CompletionToken: completionToken,
 			},
 		},
 	}
@@ -486,7 +525,9 @@ func (d *dtmb) AbandonActivityWorkItem(_ context.Context, item *backend.Activity
 // [api.ErrNotCompleted] is returned if the specified orchestration instance is still running.
 func (d *dtmb) PurgeOrchestrationState(ctx context.Context, id api.InstanceID) error {
 	_, err := d.clientClient.PurgeOrchestration(ctx, &dtmbprotos.PurgeOrchestrationRequest{
-		Request:      &dtmbprotos.PurgeOrchestrationRequest_OrchestrationId{OrchestrationId: string(id)},
+		Request: &dtmbprotos.PurgeOrchestrationRequest_OrchestrationId{
+			OrchestrationId: string(id),
+		},
 		NonRecursive: false, // TODO: Should this be globally configurable?
 	})
 
