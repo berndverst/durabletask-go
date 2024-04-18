@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	dtmbprotos "github.com/microsoft/durabletask-go/backend/azure/dtmb/internal/backend/v1"
 	"github.com/microsoft/durabletask-go/backend/azure/dtmb/internal/utils"
@@ -441,17 +442,20 @@ func (d *dtmb) GetActivityWorkItem(context.Context) (*backend.ActivityWorkItem, 
 		return nil, backend.ErrNoWorkItems
 	}
 
-	// is ExecuteActivitMessage.GetInput() a serialized history event? Or what exactly is this?
+	// this can't be the right way to provide the input, but how should it be done?
 
-	historyEvent, err := backend.UnmarshalHistoryEvent(item.GetInput())
-	if err != nil {
-		return nil, err
+	genericInputWrapper := protos.HistoryEvent{
+		EventType: &protos.HistoryEvent_GenericEvent{
+			GenericEvent: &protos.GenericEvent{
+				Data: &wrapperspb.StringValue{Value: string(item.GetInput())},
+			},
+		},
 	}
 
 	ret = &backend.ActivityWorkItem{
-		SequenceNumber: int64(historyEvent.EventId),
-		InstanceID:     api.InstanceID(item.OrchestrationId),
-		NewEvent:       historyEvent,
+		// SequenceNumber:  // how do I get the sequence number?
+		InstanceID: api.InstanceID(item.OrchestrationId),
+		NewEvent:   &genericInputWrapper,
 		Properties: map[string]interface{}{
 			"CompletionToken": item.GetCompletionToken(),
 			"ActivityName":    item.GetName(),
