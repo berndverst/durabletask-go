@@ -61,7 +61,7 @@ func NewDTMBOptions(endpoint string) *DTMBOptions {
 	}
 }
 
-func NewDTMB(opts *DTMBOptions, logger backend.Logger) (*dtmb, error) {
+func NewDTMB(opts *DTMBOptions, logger backend.Logger) (backend.Backend, error) {
 	be := &dtmb{
 		logger: logger,
 	}
@@ -221,7 +221,7 @@ func (d *dtmb) Stop(ctx context.Context) error {
 
 // CreateOrchestrationInstance creates a new orchestration instance with a history event that
 // wraps a ExecutionStarted event.
-func (d *dtmb) CreateOrchestrationInstance(ctx context.Context, event *backend.HistoryEvent) error {
+func (d *dtmb) CreateOrchestrationInstance(ctx context.Context, event *backend.HistoryEvent, IdReusePolicy ...backend.OrchestrationIdReusePolicyOptions) error {
 	executionStartedEvent := event.GetExecutionStarted()
 	if executionStartedEvent == nil {
 		return fmt.Errorf("expected an ExecutionStarted event, but got %v", event.GetEventType())
