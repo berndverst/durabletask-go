@@ -2,6 +2,7 @@ package dtmb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -330,7 +331,6 @@ func (d *dtmb) GetOrchestrationWorkItem(ctx context.Context) (*backend.Orchestra
 		InstanceID: api.InstanceID(item.GetOrchestrationId()),
 		NewEvents:  convertedEvents,
 		RetryCount: int32(item.GetRetryCount()),
-		// RetryCount: TODO: Alessandro to implement
 		Properties: map[string]interface{}{
 			"CompletionToken":   item.GetCompletionToken(),
 			"OrchestrationName": item.GetName(),
