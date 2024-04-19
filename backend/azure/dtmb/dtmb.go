@@ -5,14 +5,17 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync/atomic"
 	"time"
 
 	"github.com/microsoft/durabletask-go/api"
 	"github.com/microsoft/durabletask-go/backend"
 	"github.com/microsoft/durabletask-go/internal/protos"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	dtmbprotos "github.com/microsoft/durabletask-go/backend/azure/dtmb/internal/backend/v1"
@@ -24,6 +27,11 @@ const (
 	defaultEndpoint = "localhost:50051"
 )
 
+type TaskHubClient struct {
+	dtmbprotos.TaskHubClientClient
+	dtmbprotos.TaskHubWorkerClient
+}
+
 type dtmb struct {
 	logger                    backend.Logger
 	endpoint                  string
@@ -32,9 +40,9 @@ type dtmb struct {
 	activityQueue             utils.SyncQueue[dtmbprotos.ExecuteActivityMessage]
 	orchestrationHistoryCache utils.OrchestrationHistoryCache
 	connectWorkerClientStream chan *dtmbprotos.ConnectWorkerClientMessage
-	clientClient              dtmbprotos.TaskHubClientClient
-	workerClient              dtmbprotos.TaskHubWorkerClient
+	client                    TaskHubClient
 	workerCancelFunc          context.CancelFunc
+	running                   atomic.Bool
 }
 
 type DTMBOptions struct {
@@ -79,8 +87,11 @@ func NewDTMB(opts *DTMBOptions, logger backend.Logger) (*dtmb, error) {
 		return nil, fmt.Errorf("failed to connect to dtmb: %v", err)
 	}
 
-	be.clientClient = dtmbprotos.NewTaskHubClientClient(conn)
-	be.workerClient = dtmbprotos.NewTaskHubWorkerClient(conn)
+	be.client = TaskHubClient{
+		TaskHubClientClient: dtmbprotos.NewTaskHubClientClient(conn),
+		TaskHubWorkerClient: dtmbprotos.NewTaskHubWorkerClient(conn),
+	}
+	dtmbprotos.NewTaskHubClientClient(conn)
 
 	return be, nil
 }
@@ -91,7 +102,7 @@ func NewDTMB(opts *DTMBOptions, logger backend.Logger) (*dtmb, error) {
 //
 // If the task hub for this backend is not found, an error of type [ErrTaskHubNotFound] is returned.
 func (d *dtmb) CreateTaskHub(ctx context.Context) error {
-	_, err := d.clientClient.Metadata(ctx, &dtmbprotos.MetadataRequest{})
+	_, err := d.client.TaskHubClientClient.Metadata(ctx, &dtmbprotos.MetadataRequest{})
 	if err != nil {
 		return backend.ErrTaskHubNotFound
 	}
@@ -107,11 +118,14 @@ func (d *dtmb) DeleteTaskHub(context.Context) error {
 }
 
 // Start starts any background processing done by this backend.
-func (d *dtmb) Start(ctx context.Context, orchestrators *[]string, activities *[]string) error {
+func (d *dtmb) Start(ctx context.Context, orchestrators []string, activities []string) error {
+	if !d.running.CompareAndSwap(false, true) {
+		return errors.New("backend is already running")
+	}
 	// TODO: is the context provided a background context?
 
-	ctxWithCancel, cancel := context.WithCancel(ctx)
-	d.workerCancelFunc = cancel
+	var ctxWithCancel context.Context
+	ctxWithCancel, d.workerCancelFunc = context.WithCancel(ctx)
 
 	err := d.connectWorker(ctxWithCancel, orchestrators, activities)
 	if err != nil {
@@ -121,19 +135,19 @@ func (d *dtmb) Start(ctx context.Context, orchestrators *[]string, activities *[
 	return nil
 }
 
-func (d *dtmb) connectWorker(ctx context.Context, orchestrators *[]string, activities *[]string) error {
+func (d *dtmb) connectWorker(ctx context.Context, orchestrators []string, activities []string) error {
 	// Establish the ConnectWorker stream
-	worker := d.workerClient
-	var taskHubName string = "MAKE THIS CONFIGURABLE"
-	var testID string = "MAKE THIS CONFIGURABLE"
+	worker := d.client
+	var taskHubName string = "default" // make this configurable
+	var testID string = "some-test-id" // make this configurable
 
 	readyCh := make(chan struct{})
 	bgErrCh := make(chan error)
 	d.connectWorkerClientStream = make(chan *dtmbprotos.ConnectWorkerClientMessage)
 	serverMessageChan := make(chan *dtmbprotos.ConnectWorkerServerMessage)
 
-	var orchestratorFnList utils.OrchestratorFnList = *orchestrators
-	var activityFnList utils.ActivityFnList = *activities
+	var orchestratorFnList utils.OrchestratorFnList = orchestrators
+	var activityFnList utils.ActivityFnList = activities
 
 	// start the bidirectional stream
 	go func() {
@@ -141,7 +155,7 @@ func (d *dtmb) connectWorker(ctx context.Context, orchestrators *[]string, activ
 			ctx,
 			testID,
 			taskHubName,
-			worker,
+			worker.TaskHubWorkerClient,
 			orchestratorFnList,
 			activityFnList,
 			serverMessageChan,
@@ -180,14 +194,9 @@ func (d *dtmb) connectWorker(ctx context.Context, orchestrators *[]string, activ
 			switch m := msg.Message.(type) {
 
 			case *dtmbprotos.ConnectWorkerServerMessage_ExecuteActivity:
-				go func() {
-					d.activityQueue.Enqueue(m.ExecuteActivity)
-				}()
-
+				d.activityQueue.Enqueue(m.ExecuteActivity)
 			case *dtmbprotos.ConnectWorkerServerMessage_ExecuteOrchestration:
-				go func() {
-					d.orchestrationQueue.Enqueue(m.ExecuteOrchestration)
-				}()
+				d.orchestrationQueue.Enqueue(m.ExecuteOrchestration)
 			}
 		}
 	}()
@@ -218,20 +227,17 @@ func (d *dtmb) CreateOrchestrationInstance(ctx context.Context, event *backend.H
 		return fmt.Errorf("expected an ExecutionStarted event, but got %v", event.GetEventType())
 	}
 
-	_, err := d.clientClient.CreateOrchestration(ctx, &dtmbprotos.CreateOrchestrationRequest{
+	_, err := d.client.CreateOrchestration(ctx, &dtmbprotos.CreateOrchestrationRequest{
 		OrchestrationId: executionStartedEvent.GetOrchestrationInstance().GetInstanceId(),
 		Name:            executionStartedEvent.GetName(),
 		Version:         executionStartedEvent.GetVersion().GetValue(),
-		Input:           []byte(executionStartedEvent.GetName()),
+		Input:           []byte(executionStartedEvent.GetInput().GetValue()),
 		StartAt: &dtmbprotos.Delay{
 			Delayed: &dtmbprotos.Delay_Time{
 				Time: executionStartedEvent.GetScheduledStartTimestamp(),
 			},
 		},
-		IdReusePolicy: &dtmbprotos.OrchestrationIDReusePolicy{ // is this correct?
-			RuntimeStatus: nil, // []dtmbprotos.OrchestrationStatus{}, // what do I put here?
-			// Action:        dtmbprotos.OrchestrationIDReusePolicy_ERROR, // this is the default value
-		},
+		// IdReusePolicy: // this is not implemented on the server
 	})
 
 	return err
@@ -249,7 +255,7 @@ func (d *dtmb) AddNewOrchestrationEvent(ctx context.Context, id api.InstanceID, 
 			Input:           []byte(typedEvent.EventRaised.GetInput().GetValue()), // or should this be backend.MarshalHistoryEvent(event)?
 		}
 
-		_, err = d.clientClient.RaiseEvent(context.Background(), &req)
+		_, err = d.client.RaiseEvent(ctx, &req)
 
 	case *protos.HistoryEvent_ExecutionTerminated:
 		// this is a terminal event, so we can evict the cache
@@ -283,7 +289,7 @@ func (d *dtmb) getOrchestrationHistory(ctx context.Context, orchestrationID stri
 		}
 	}
 
-	res, err := d.workerClient.GetOrchestrationHistory(
+	res, err := d.client.GetOrchestrationHistory(
 		ctx,
 		&historyRequest,
 	)
@@ -362,11 +368,16 @@ func (d *dtmb) GetOrchestrationRuntimeState(ctx context.Context, workitem *backe
 //
 // Returns [api.ErrInstanceNotFound] if the orchestration instance doesn't exist.
 func (d *dtmb) GetOrchestrationMetadata(ctx context.Context, id api.InstanceID) (*api.OrchestrationMetadata, error) {
-	resp, err := d.clientClient.GetOrchestration(ctx, &dtmbprotos.GetOrchestrationRequest{
+	resp, err := d.client.GetOrchestration(ctx, &dtmbprotos.GetOrchestrationRequest{
 		OrchestrationId: string(id),
 		NoPayloads:      false,
 	})
 	if err != nil {
+		code := status.Code(err)
+		if code == codes.NotFound {
+			return nil, api.ErrInstanceNotFound
+		}
+
 		return nil, err
 	}
 
@@ -516,7 +527,7 @@ func (d *dtmb) AbandonActivityWorkItem(_ context.Context, item *backend.Activity
 // [api.ErrInstanceNotFound] is returned if the specified orchestration instance doesn't exist.
 // [api.ErrNotCompleted] is returned if the specified orchestration instance is still running.
 func (d *dtmb) PurgeOrchestrationState(ctx context.Context, id api.InstanceID) error {
-	_, err := d.clientClient.PurgeOrchestration(ctx, &dtmbprotos.PurgeOrchestrationRequest{
+	_, err := d.client.PurgeOrchestration(ctx, &dtmbprotos.PurgeOrchestrationRequest{
 		Request: &dtmbprotos.PurgeOrchestrationRequest_OrchestrationId{
 			OrchestrationId: string(id),
 		},

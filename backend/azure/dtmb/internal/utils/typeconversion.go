@@ -9,6 +9,14 @@ import (
 	dtmbprotos "github.com/microsoft/durabletask-go/backend/azure/dtmb/internal/backend/v1"
 )
 
+func ToStringWrapper(data []byte) *wrapperspb.StringValue {
+	return &wrapperspb.StringValue{Value: string(data)}
+}
+
+func WrapString(data string) *wrapperspb.StringValue {
+	return &wrapperspb.StringValue{Value: data}
+}
+
 func ConvertFailureDetails(failureDetails *dtmbprotos.FailureDetails) *protos.TaskFailureDetails {
 	if failureDetails == nil {
 		return nil
@@ -17,7 +25,7 @@ func ConvertFailureDetails(failureDetails *dtmbprotos.FailureDetails) *protos.Ta
 	return &protos.TaskFailureDetails{
 		ErrorType:      failureDetails.GetErrorType(),
 		ErrorMessage:   failureDetails.GetErrorMessage(),
-		StackTrace:     &wrapperspb.StringValue{Value: failureDetails.GetStackTrace()}, // what if this is not string
+		StackTrace:     WrapString(failureDetails.GetStackTrace()),
 		InnerFailure:   ConvertFailureDetails(failureDetails.GetInnerFailure()),
 		IsNonRetriable: !failureDetails.GetRetriable(), // need to negate this
 	}
@@ -46,16 +54,16 @@ func ConvertEvent(event *dtmbprotos.Event) (*protos.HistoryEvent, error) {
 			EventType: &protos.HistoryEvent_ExecutionStarted{
 				ExecutionStarted: &protos.ExecutionStartedEvent{
 					Name:    typedEvent.ExecutionStarted.GetName(),
-					Version: &wrapperspb.StringValue{Value: typedEvent.ExecutionStarted.GetVersion()},
-					Input:   &wrapperspb.StringValue{Value: string(typedEvent.ExecutionStarted.GetInput())}, // what if this is not string
+					Version: WrapString(typedEvent.ExecutionStarted.GetVersion()),
+					Input:   ToStringWrapper(typedEvent.ExecutionStarted.GetInput()), // what if this is not string
 					OrchestrationInstance: &protos.OrchestrationInstance{
 						InstanceId:  typedEvent.ExecutionStarted.GetOrchestrationId(),
 						ExecutionId: wrapperspb.String(typedEvent.ExecutionStarted.GetExecutionId()),
 					},
 					ParentInstance: &protos.ParentInstanceInfo{
 						TaskScheduledId: int32(typedEvent.ExecutionStarted.GetParent().GetSequenceNumber()),
-						Name:            &wrapperspb.StringValue{Value: typedEvent.ExecutionStarted.GetParent().GetName()},
-						Version:         &wrapperspb.StringValue{Value: typedEvent.ExecutionStarted.GetParent().GetVersion()},
+						Name:            WrapString(typedEvent.ExecutionStarted.GetParent().GetName()),
+						Version:         WrapString(typedEvent.ExecutionStarted.GetParent().GetVersion()),
 						OrchestrationInstance: &protos.OrchestrationInstance{
 							InstanceId: typedEvent.ExecutionStarted.GetParent().GetOrchestrationId(),
 						},
@@ -64,7 +72,7 @@ func ConvertEvent(event *dtmbprotos.Event) (*protos.HistoryEvent, error) {
 					ParentTraceContext: &protos.TraceContext{
 						TraceParent: typedEvent.ExecutionStarted.GetTraceContext().GetTraceParent(),
 						SpanID:      typedEvent.ExecutionStarted.GetTraceContext().GetSpanId(),
-						TraceState:  &wrapperspb.StringValue{Value: typedEvent.ExecutionStarted.GetTraceContext().GetTraceState()},
+						TraceState:  WrapString(typedEvent.ExecutionStarted.GetTraceContext().GetTraceState()),
 					},
 					// TODO (ItalyPaleAle): implement tracing
 					// OrchestrationSpanID: &wrapperspb.StringValue{},
@@ -89,7 +97,7 @@ func ConvertEvent(event *dtmbprotos.Event) (*protos.HistoryEvent, error) {
 			Timestamp: event.GetTimestamp(),
 			EventType: &protos.HistoryEvent_ExecutionTerminated{
 				ExecutionTerminated: &protos.ExecutionTerminatedEvent{
-					Input:   &wrapperspb.StringValue{Value: string(typedEvent.ExecutionTerminated.GetReason())}, // what if this is not string
+					Input:   ToStringWrapper(typedEvent.ExecutionTerminated.GetReason()), // what if this is not string
 					Recurse: !typedEvent.ExecutionTerminated.GetNonRecursive(),
 				},
 			},
@@ -100,7 +108,7 @@ func ConvertEvent(event *dtmbprotos.Event) (*protos.HistoryEvent, error) {
 			Timestamp: event.GetTimestamp(),
 			EventType: &protos.HistoryEvent_ExecutionResumed{
 				ExecutionResumed: &protos.ExecutionResumedEvent{
-					Input: &wrapperspb.StringValue{Value: string(typedEvent.ExecutionResumed.GetInput())}, // what if this is not string
+					Input: ToStringWrapper(typedEvent.ExecutionResumed.GetInput()), // what if this is not string
 				},
 			},
 		}, nil
@@ -110,7 +118,7 @@ func ConvertEvent(event *dtmbprotos.Event) (*protos.HistoryEvent, error) {
 			Timestamp: event.GetTimestamp(),
 			EventType: &protos.HistoryEvent_ExecutionSuspended{
 				ExecutionSuspended: &protos.ExecutionSuspendedEvent{
-					Input: &wrapperspb.StringValue{Value: string(typedEvent.ExecutionSuspended.GetInput())}, // what if this is not string
+					Input: ToStringWrapper(typedEvent.ExecutionSuspended.GetInput()), // what if this is not string
 				},
 			},
 		}, nil
@@ -120,7 +128,7 @@ func ConvertEvent(event *dtmbprotos.Event) (*protos.HistoryEvent, error) {
 			Timestamp: event.GetTimestamp(),
 			EventType: &protos.HistoryEvent_ContinueAsNew{
 				ContinueAsNew: &protos.ContinueAsNewEvent{
-					Input: &wrapperspb.StringValue{Value: string(typedEvent.ContinueAsNew.GetInput())}, // what if this is not string
+					Input: ToStringWrapper(typedEvent.ContinueAsNew.GetInput()), // what if this is not string
 				},
 			},
 		}, nil
@@ -151,12 +159,12 @@ func ConvertEvent(event *dtmbprotos.Event) (*protos.HistoryEvent, error) {
 			EventType: &protos.HistoryEvent_TaskScheduled{
 				TaskScheduled: &protos.TaskScheduledEvent{
 					Name:  typedEvent.ActivityScheduled.GetName(),
-					Input: &wrapperspb.StringValue{Value: string(typedEvent.ActivityScheduled.GetInput())}, // what if this is not string
+					Input: ToStringWrapper(typedEvent.ActivityScheduled.GetInput()), // what if this is not string
 					// Version  // Activities are not versioned in DTMB
 					ParentTraceContext: &protos.TraceContext{
 						TraceParent: typedEvent.ActivityScheduled.GetParentTraceContext().GetTraceParent(),
 						SpanID:      typedEvent.ActivityScheduled.GetParentTraceContext().GetSpanId(),
-						TraceState:  &wrapperspb.StringValue{Value: typedEvent.ActivityScheduled.GetParentTraceContext().GetTraceState()},
+						TraceState:  WrapString(typedEvent.ActivityScheduled.GetParentTraceContext().GetTraceState()),
 					},
 				},
 			},
@@ -169,7 +177,7 @@ func ConvertEvent(event *dtmbprotos.Event) (*protos.HistoryEvent, error) {
 			EventType: &protos.HistoryEvent_TaskCompleted{
 				TaskCompleted: &protos.TaskCompletedEvent{
 					TaskScheduledId: int32(typedEvent.ActivityCompleted.GetRelatedSequenceNumber()),
-					Result:          &wrapperspb.StringValue{Value: string(typedEvent.ActivityCompleted.GetResult())}, // what if this is not string
+					Result:          ToStringWrapper(typedEvent.ActivityCompleted.GetResult()), // what if this is not string
 				},
 			},
 		}, nil
@@ -193,7 +201,7 @@ func ConvertEvent(event *dtmbprotos.Event) (*protos.HistoryEvent, error) {
 			EventType: &protos.HistoryEvent_EventRaised{
 				EventRaised: &protos.EventRaisedEvent{
 					Name:  typedEvent.EventRaised.GetName(),
-					Input: &wrapperspb.StringValue{Value: string(typedEvent.EventRaised.GetInput())}, // what if this is not string
+					Input: ToStringWrapper(typedEvent.EventRaised.GetInput()), // what if this is not string
 				},
 			},
 		}, nil
@@ -206,7 +214,7 @@ func ConvertEvent(event *dtmbprotos.Event) (*protos.HistoryEvent, error) {
 				EventSent: &protos.EventSentEvent{
 					InstanceId: typedEvent.EventSent.GetOrchestrationId(),
 					Name:       typedEvent.EventSent.GetName(),
-					Input:      &wrapperspb.StringValue{Value: string(typedEvent.EventSent.GetInput())}, // what if this is not string
+					Input:      ToStringWrapper(typedEvent.EventSent.GetInput()), // what if this is not string
 				},
 			},
 		}, nil
@@ -250,12 +258,12 @@ func ConvertEvent(event *dtmbprotos.Event) (*protos.HistoryEvent, error) {
 				SubOrchestrationInstanceCreated: &protos.SubOrchestrationInstanceCreatedEvent{
 					InstanceId: typedEvent.SubOrchestrationInstanceCreated.GetOrchestrationId(),
 					Name:       typedEvent.SubOrchestrationInstanceCreated.GetName(),
-					Version:    &wrapperspb.StringValue{Value: typedEvent.SubOrchestrationInstanceCreated.GetVersion()},
-					Input:      &wrapperspb.StringValue{Value: string(typedEvent.SubOrchestrationInstanceCreated.GetInput())}, // what if this is not string
+					Version:    WrapString(typedEvent.SubOrchestrationInstanceCreated.GetVersion()),
+					Input:      ToStringWrapper(typedEvent.SubOrchestrationInstanceCreated.GetInput()),
 					ParentTraceContext: &protos.TraceContext{
 						TraceParent: typedEvent.SubOrchestrationInstanceCreated.GetParentTraceContext().GetTraceParent(),
 						SpanID:      typedEvent.SubOrchestrationInstanceCreated.GetParentTraceContext().GetSpanId(),
-						TraceState:  &wrapperspb.StringValue{Value: typedEvent.SubOrchestrationInstanceCreated.GetParentTraceContext().GetTraceState()},
+						TraceState:  WrapString(typedEvent.SubOrchestrationInstanceCreated.GetParentTraceContext().GetTraceState()),
 					},
 				},
 			},
@@ -268,7 +276,7 @@ func ConvertEvent(event *dtmbprotos.Event) (*protos.HistoryEvent, error) {
 			EventType: &protos.HistoryEvent_SubOrchestrationInstanceCompleted{
 				SubOrchestrationInstanceCompleted: &protos.SubOrchestrationInstanceCompletedEvent{
 					TaskScheduledId: int32(typedEvent.SubOrchestrationInstanceCompleted.GetRelatedSequenceNumber()),
-					Result:          &wrapperspb.StringValue{Value: string(typedEvent.SubOrchestrationInstanceCompleted.GetResult())}, // what if this is not string
+					Result:          ToStringWrapper(typedEvent.SubOrchestrationInstanceCompleted.GetResult()), // what if this is not string
 				},
 			},
 		}, nil
@@ -290,7 +298,7 @@ func ConvertEvent(event *dtmbprotos.Event) (*protos.HistoryEvent, error) {
 			Timestamp: event.GetTimestamp(),
 			EventType: &protos.HistoryEvent_GenericEvent{
 				GenericEvent: &protos.GenericEvent{
-					Data: &wrapperspb.StringValue{Value: string(typedEvent.GenericEvent.GetData())}, // what if this is not string
+					Data: ToStringWrapper(typedEvent.GenericEvent.GetData()), // what if this is not string
 				},
 			},
 		}, nil

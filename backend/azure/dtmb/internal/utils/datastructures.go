@@ -12,13 +12,13 @@ const (
 )
 
 type SyncQueue[T dtmbprotos.ExecuteOrchestrationMessage | dtmbprotos.ExecuteActivityMessage | dtmbprotos.Event] struct {
-	lock  *sync.Mutex
+	lock  *sync.RWMutex
 	items []*T
 }
 
 func NewSyncQueue[T dtmbprotos.ExecuteOrchestrationMessage | dtmbprotos.ExecuteActivityMessage | dtmbprotos.Event]() SyncQueue[T] {
 	return SyncQueue[T]{
-		lock:  &sync.Mutex{},
+		lock:  &sync.RWMutex{},
 		items: []*T{},
 	}
 }
@@ -43,8 +43,8 @@ func (q *SyncQueue[T]) Dequeue() *T {
 }
 
 func (q *SyncQueue[T]) PeekAll() []*T {
-	q.lock.Lock()
-	defer q.lock.Unlock()
+	q.lock.RLock()
+	defer q.lock.RUnlock()
 
 	// create a manual copy of the items, not just a copy of the pointers
 	ret := make([]*T, len(q.items))
@@ -60,8 +60,8 @@ func (q *SyncQueue[T]) PeekAll() []*T {
 }
 
 func (q *SyncQueue[T]) PeekLast() *T {
-	q.lock.Lock()
-	defer q.lock.Unlock()
+	q.lock.RLock()
+	defer q.lock.RUnlock()
 	if len(q.items) == 0 {
 		return nil
 	}
