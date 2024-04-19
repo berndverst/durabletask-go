@@ -50,7 +50,7 @@ type Backend interface {
 
 	// Start starts any background processing done by this backend.
 	// Backends supporting this feature can filter orchestrator and activity types server-side.
-	Start(ctx context.Context, orchestrators *[]string, activities *[]string) error
+	Start(ctx context.Context, orchestrators []string, activities []string) error
 
 	// Stop stops any background processing done by this backend.
 	Stop(context.Context) error

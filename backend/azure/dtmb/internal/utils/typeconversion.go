@@ -41,7 +41,7 @@ func ConvertEvent(event *dtmbprotos.Event) (*protos.HistoryEvent, error) {
 	switch typedEvent := event.GetEventType().(type) {
 	case *dtmbprotos.Event_ExecutionStarted:
 		return &protos.HistoryEvent{
-			EventId:   int32(event.GetSequenceNumber()), // is this correct?
+			EventId:   int32(event.GetSequenceNumber()),
 			Timestamp: event.GetTimestamp(),
 			EventType: &protos.HistoryEvent_ExecutionStarted{
 				ExecutionStarted: &protos.ExecutionStartedEvent{
@@ -66,7 +66,7 @@ func ConvertEvent(event *dtmbprotos.Event) (*protos.HistoryEvent, error) {
 						SpanID:      typedEvent.ExecutionStarted.GetTraceContext().GetSpanId(),
 						TraceState:  &wrapperspb.StringValue{Value: typedEvent.ExecutionStarted.GetTraceContext().GetTraceState()},
 					},
-					// TODO: Alessandro to implement tracing
+					// TODO (ItalyPaleAle): implement tracing
 					// OrchestrationSpanID: &wrapperspb.StringValue{},
 				},
 			},

@@ -23,16 +23,10 @@ func NewSyncQueue[T dtmbprotos.ExecuteOrchestrationMessage | dtmbprotos.ExecuteA
 	}
 }
 
-func (q *SyncQueue[T]) Enqueue(item *T) {
+func (q *SyncQueue[T]) Enqueue(item ...*T) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
-	q.items = append(q.items, item)
-}
-
-func (q *SyncQueue[T]) EnqueueBatch(items []*T) {
-	q.lock.Lock()
-	defer q.lock.Unlock()
-	q.items = append(q.items, items...)
+	q.items = append(q.items, item...)
 }
 
 func (q *SyncQueue[T]) Dequeue() *T {
@@ -48,19 +42,36 @@ func (q *SyncQueue[T]) Dequeue() *T {
 	return item
 }
 
-func (q *SyncQueue[T]) ReadAllWithoutDequeue() []*T {
+func (q *SyncQueue[T]) PeekAll() []*T {
 	q.lock.Lock()
 	defer q.lock.Unlock()
-	return q.items
+
+	// create a manual copy of the items, not just a copy of the pointers
+	ret := make([]*T, len(q.items))
+	for i, p := range q.items {
+		if p == nil {
+			continue
+		}
+		v := *p //nolint:copylocks
+		ret[i] = &v
+	}
+
+	return ret
 }
 
-func (q *SyncQueue[T]) ReadLastWithoutDequeue() *T {
+func (q *SyncQueue[T]) PeekLast() *T {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 	if len(q.items) == 0 {
 		return nil
 	}
-	return q.items[len(q.items)-1]
+
+	// return a copy of the last item
+	if q.items[len(q.items)-1] == nil {
+		return nil
+	}
+	var itemCopy T = *q.items[len(q.items)-1] //nolint:copylocks
+	return &itemCopy
 }
 
 type OrchestrationHistoryCache struct {
@@ -97,7 +108,7 @@ func (o *OrchestrationHistoryCache) GetCachedHistoryEventsForOrchestrationID(orc
 	defer o.lock.Unlock()
 	if element, ok := o.cache[orchestrationID]; ok {
 		o.list.MoveToFront(element)
-		return element.Value.(*orchestrationHistoryItem).historyEvents.ReadAllWithoutDequeue()
+		return element.Value.(*orchestrationHistoryItem).historyEvents.PeekAll()
 	}
 	return nil
 }
@@ -113,25 +124,27 @@ func (o *OrchestrationHistoryCache) AddHistoryEventsForOrchestrationID(orchestra
 			queue := NewSyncQueue[dtmbprotos.Event]()
 			element.Value.(*orchestrationHistoryItem).historyEvents = &queue
 		}
-		element.Value.(*orchestrationHistoryItem).historyEvents.EnqueueBatch(events)
+		element.Value.(*orchestrationHistoryItem).historyEvents.Enqueue(events...)
 
-		//= orchestrationHistoryItem{orchestrationId: key, value: value}
-	} else {
-		if o.list.Len() >= o.capacity {
-			delete(o.cache, o.list.Back().Value.(*orchestrationHistoryItem).orchestrationID)
-			o.list.Remove(o.list.Back())
-		}
-
-		queue := NewSyncQueue[dtmbprotos.Event]()
-		queue.EnqueueBatch(events)
-		orchestrationHistoryItem := orchestrationHistoryItem{
-			orchestrationID: orchestrationID,
-			historyEvents:   &queue,
-		}
-
-		o.cache[orchestrationID] = o.list.PushFront(
-			orchestrationHistoryItem)
+		return
 	}
+
+	// Since we are adding a new Orchestration History, we need to check if we need to evict the oldest one
+
+	if o.list.Len() >= o.capacity {
+		delete(o.cache, o.list.Back().Value.(*orchestrationHistoryItem).orchestrationID)
+		o.list.Remove(o.list.Back())
+	}
+
+	queue := NewSyncQueue[dtmbprotos.Event]()
+	queue.Enqueue(events...)
+	orchestrationHistoryItem := orchestrationHistoryItem{
+		orchestrationID: orchestrationID,
+		historyEvents:   &queue,
+	}
+
+	o.cache[orchestrationID] = o.list.PushFront(
+		orchestrationHistoryItem)
 }
 
 func (o *OrchestrationHistoryCache) EvictCacheForOrchestrationID(orchestrationID string) {

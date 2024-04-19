@@ -972,7 +972,7 @@ func (be *sqliteBackend) PurgeOrchestrationState(ctx context.Context, id api.Ins
 }
 
 // Start implements backend.Backend
-func (*sqliteBackend) Start(context.Context, *[]string, *[]string) error {
+func (*sqliteBackend) Start(context.Context, []string, []string) error {
 	return nil
 }
 

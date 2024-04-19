@@ -85,9 +85,11 @@ func NewDTMB(opts *DTMBOptions, logger backend.Logger) (*dtmb, error) {
 	return be, nil
 }
 
-// CreateTaskHub creates a new task hub for the current backend. Task hub creation must be idempotent.
+// CreateTaskHub checks whether a task hub for the current backend has already been created.
 //
-// If the task hub for this backend already exists, an error of type [ErrTaskHubExists] is returned.
+// Task hub creation is not performed here. Instead it must be created on the durable task service.
+//
+// If the task hub for this backend is not found, an error of type [ErrTaskHubNotFound] is returned.
 func (d *dtmb) CreateTaskHub(ctx context.Context) error {
 	_, err := d.clientClient.Metadata(ctx, &dtmbprotos.MetadataRequest{})
 	if err != nil {
@@ -384,8 +386,6 @@ func (d *dtmb) GetOrchestrationMetadata(ctx context.Context, id api.InstanceID) 
 }
 
 // CompleteOrchestrationWorkItem completes a work item by saving the updated runtime state to durable storage.
-//
-// Returns [ErrWorkItemLockLost] if the work-item couldn't be completed due to a lock-lost conflict (e.g., split-brain).
 func (d *dtmb) CompleteOrchestrationWorkItem(_ context.Context, item *backend.OrchestrationWorkItem) error {
 	completionToken := item.Properties["CompletionToken"].(string)
 	orchestrationName := item.Properties["OrchestrationName"].(string)
@@ -399,12 +399,10 @@ func (d *dtmb) CompleteOrchestrationWorkItem(_ context.Context, item *backend.Or
 				Version:         version,
 				CompletionToken: completionToken,
 				CustomStatus:    item.State.CustomStatus.GetValue(),
-				Actions:         nil, // // what do I put here?
+				Actions:         nil, // TODO (cgillum, ItalyPaleAle): Determine whether the backend requires this
 			},
 		},
 	}
-	// this is a terminal event, so we can evict the cache
-	d.orchestrationHistoryCache.EvictCacheForOrchestrationID(string(item.InstanceID))
 	return nil
 }
 
@@ -428,8 +426,6 @@ func (d *dtmb) AbandonOrchestrationWorkItem(_ context.Context, item *backend.Orc
 			},
 		},
 	}
-	// this is a terminal event, so we can evict the cache
-	d.orchestrationHistoryCache.EvictCacheForOrchestrationID(string(item.InstanceID))
 	return nil
 }
 
@@ -442,23 +438,25 @@ func (d *dtmb) GetActivityWorkItem(context.Context) (*backend.ActivityWorkItem, 
 		return nil, backend.ErrNoWorkItems
 	}
 
-	// this can't be the right way to provide the input, but how should it be done?
-
-	genericInputWrapper := protos.HistoryEvent{
-		EventType: &protos.HistoryEvent_GenericEvent{
-			GenericEvent: &protos.GenericEvent{
-				Data: &wrapperspb.StringValue{Value: string(item.GetInput())},
+	event := protos.HistoryEvent{
+		EventType: &protos.HistoryEvent_TaskScheduled{
+			TaskScheduled: &protos.TaskScheduledEvent{
+				Name: item.GetName(),
+				// Version:          // We don't use versions for activities
+				Input: &wrapperspb.StringValue{Value: string(item.GetInput())},
+				// ParentTraceContext: &protos.TraceContext{} // TODO: Add support for this if required
 			},
 		},
 	}
 
 	ret = &backend.ActivityWorkItem{
-		// SequenceNumber:  // how do I get the sequence number?
+		// SequenceNumber: 0, // TODO: Determine if this is required and how to obtain it
 		InstanceID: api.InstanceID(item.OrchestrationId),
-		NewEvent:   &genericInputWrapper,
+		NewEvent:   &event,
 		Properties: map[string]interface{}{
 			"CompletionToken": item.GetCompletionToken(),
 			"ActivityName":    item.GetName(),
+			"ExecutionId":     item.GetExecutionId(), // probably not needed
 		},
 	}
 	return ret, nil
@@ -468,9 +466,9 @@ func (d *dtmb) GetActivityWorkItem(context.Context) (*backend.ActivityWorkItem, 
 //
 // Returns [ErrWorkItemLockLost] if the work-item couldn't be completed due to a lock-lost conflict (e.g., split-brain).
 func (d *dtmb) CompleteActivityWorkItem(_ context.Context, item *backend.ActivityWorkItem) error {
-	bytes, err := backend.MarshalHistoryEvent(item.Result)
-	if err != nil {
-		return err
+	var result []byte = nil
+	if item.NewEvent.GetTaskCompleted() != nil {
+		result = []byte(item.NewEvent.GetTaskCompleted().GetResult().GetValue())
 	}
 	var failureDetails *dtmbprotos.FailureDetails = nil
 	if item.NewEvent.GetTaskFailed() != nil {
@@ -484,10 +482,10 @@ func (d *dtmb) CompleteActivityWorkItem(_ context.Context, item *backend.Activit
 		Message: &dtmbprotos.ConnectWorkerClientMessage_CompleteActivity{
 			CompleteActivity: &dtmbprotos.CompleteActivityMessage{
 				OrchestrationId: string(item.InstanceID),
-				Name:            activityName,    // what do I put here?
-				CompletionToken: completionToken, // what do I put here?
-				Result:          bytes,           // is this correct?
-				FailureDetails:  failureDetails,  // which failures go here?
+				Name:            activityName,
+				CompletionToken: completionToken,
+				Result:          result,
+				FailureDetails:  failureDetails, // which failures go here?
 			},
 		},
 	}
@@ -522,7 +520,7 @@ func (d *dtmb) PurgeOrchestrationState(ctx context.Context, id api.InstanceID) e
 		Request: &dtmbprotos.PurgeOrchestrationRequest_OrchestrationId{
 			OrchestrationId: string(id),
 		},
-		NonRecursive: false, // TODO: Should this be globally configurable?
+		NonRecursive: false,
 	})
 
 	// TODO: Check if the error is ErrInstanceNotFound or ErrNotCompleted

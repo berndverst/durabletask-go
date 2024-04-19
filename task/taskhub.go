@@ -38,8 +38,8 @@ func (w *taskHubWorker) Start(ctx context.Context) error {
 		return err
 	}
 
-	var orchestrators *[]string = nil
-	var activities *[]string = nil
+	var orchestrators []string = nil
+	var activities []string = nil
 
 	// If a task registry reference was provided we can get the orchestrator and activity names
 	if w.taskRegistry != nil {

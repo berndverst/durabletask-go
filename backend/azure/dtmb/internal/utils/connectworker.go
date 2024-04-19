@@ -2,8 +2,6 @@ package utils
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -118,10 +116,6 @@ func ConnectWorker(
 				return
 
 			case <-tick.C:
-				if debug {
-					log.Printf("[%s] Sending ping…", testID)
-				}
-
 				// Send an empty message as ping
 				err = stream.Send(&backend.ConnectWorkerClientMessage{})
 				if err != nil {
@@ -236,13 +230,4 @@ func (l OrchestratorFnList) ToProto() []*backend.EstablishWorkerConnectionMessag
 		}
 	}
 	return res
-}
-
-func generateTestID() (string, error) {
-	b := make([]byte, 5)
-	_, err := io.ReadFull(rand.Reader, b)
-	if err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
 }

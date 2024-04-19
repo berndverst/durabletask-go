@@ -53,7 +53,7 @@ func (r *TaskRegistry) AddActivityN(name string, a Activity) error {
 	return nil
 }
 
-func (r *TaskRegistry) GetOrchestratorNames() *[]string {
+func (r *TaskRegistry) GetOrchestratorNames() []string {
 	keys := make([]string, 0, len(r.orchestrators))
 	for k := range r.orchestrators {
 		keys = append(keys, k)
@@ -61,10 +61,10 @@ func (r *TaskRegistry) GetOrchestratorNames() *[]string {
 	if len(keys) == 0 {
 		return nil
 	}
-	return &keys
+	return keys
 }
 
-func (r *TaskRegistry) GetActivityNames() *[]string {
+func (r *TaskRegistry) GetActivityNames() []string {
 	keys := make([]string, 0, len(r.activities))
 	for k := range r.activities {
 		keys = append(keys, k)
@@ -72,5 +72,5 @@ func (r *TaskRegistry) GetActivityNames() *[]string {
 	if len(keys) == 0 {
 		return nil
 	}
-	return &keys
+	return keys
 }
