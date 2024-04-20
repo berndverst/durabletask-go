@@ -278,7 +278,7 @@ func (d *dtmb) getOrchestrationHistory(ctx context.Context, orchestrationID stri
 	cachedEvents := d.orchestrationHistoryCache.GetCachedHistoryEventsForOrchestrationID(orchestrationID)
 
 	var historyRequest dtmbprotos.GetOrchestrationHistoryRequest
-	if cachedEvents == nil {
+	if cachedEvents == nil || len(cachedEvents) == 0 {
 		historyRequest = dtmbprotos.GetOrchestrationHistoryRequest{
 			OrchestrationId: orchestrationID,
 		}

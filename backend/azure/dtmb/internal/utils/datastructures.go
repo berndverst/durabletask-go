@@ -90,6 +90,7 @@ type orchestrationHistoryItem struct {
 func NewOrchestrationHistoryCache(capacity *int) OrchestrationHistoryCache {
 	if capacity == nil {
 		return OrchestrationHistoryCache{
+			lock:     &sync.Mutex{},
 			capacity: DefaultOrchestrationHistoryCacheSize,
 			cache:    make(map[string]*list.Element),
 			list:     list.New(),
@@ -144,7 +145,7 @@ func (o *OrchestrationHistoryCache) AddHistoryEventsForOrchestrationID(orchestra
 	}
 
 	o.cache[orchestrationID] = o.list.PushFront(
-		orchestrationHistoryItem)
+		&orchestrationHistoryItem)
 }
 
 func (o *OrchestrationHistoryCache) EvictCacheForOrchestrationID(orchestrationID string) {
