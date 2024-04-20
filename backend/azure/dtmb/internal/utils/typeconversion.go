@@ -86,7 +86,7 @@ func ConvertEvent(event *dtmbprotos.Event) (*protos.HistoryEvent, error) {
 			EventType: &protos.HistoryEvent_ExecutionCompleted{
 				ExecutionCompleted: &protos.ExecutionCompletedEvent{
 					OrchestrationStatus: protos.OrchestrationStatus(typedEvent.ExecutionCompleted.GetOrchestrationStatus()),
-					Result:              &wrapperspb.StringValue{},
+					Result:              ToStringWrapper(typedEvent.ExecutionCompleted.GetResult()),
 					FailureDetails:      ConvertFailureDetails(typedEvent.ExecutionCompleted.GetFailureDetails()),
 				},
 			},

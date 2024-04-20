@@ -201,15 +201,16 @@ func (d *dtmb) connectWorker(ctx context.Context, orchestrators []string, activi
 		}
 	}()
 
-	// Wait for stop (or an error)
-	select {
-	case err = <-bgErrCh:
-		log.Printf("[%s] Error from ConnectWorker: %v", testID, err)
-		return fmt.Errorf("error from ConnectWorker: %w", err)
-	case <-ctx.Done():
-		// We stopped, so all good
-		return nil
-	}
+	// // Wait for stop (or an error)
+	// select {
+	// case err = <-bgErrCh:
+	// 	log.Printf("[%s] Error from ConnectWorker: %v", testID, err)
+	// 	return fmt.Errorf("error from ConnectWorker: %w", err)
+	// case <-ctx.Done():
+	// 	// We stopped, so all good
+	// 	return nil
+	// }
+	return nil
 }
 
 // Stop stops any background processing done by this backend.
@@ -298,6 +299,14 @@ func (d *dtmb) getOrchestrationHistory(ctx context.Context, orchestrationID stri
 	}
 
 	events := res.GetEvent()
+
+	if len(events) != 0 {
+		if events[0].SequenceNumber == 0 && historyRequest.LastItemSequenceNumber != 0 {
+			// the server has reset the history
+			d.orchestrationHistoryCache.EvictCacheForOrchestrationID(orchestrationID)
+			cachedEvents = nil
+		}
+	}
 
 	// cache the newly received events
 	d.orchestrationHistoryCache.AddHistoryEventsForOrchestrationID(orchestrationID, events)
@@ -396,6 +405,140 @@ func (d *dtmb) GetOrchestrationMetadata(ctx context.Context, id api.InstanceID) 
 	return ret, nil
 }
 
+func extractActionsFromOrchestrationState(state *backend.OrchestrationRuntimeState) []*dtmbprotos.OrchestratorAction {
+	actions := make([]*dtmbprotos.OrchestratorAction, 0)
+	pendingMessages := state.PendingMessages()
+	pendingTasks := state.PendingTasks()
+	pendingTimers := state.PendingTimers()
+
+	for _, task := range pendingTasks {
+		action := &dtmbprotos.OrchestratorAction{
+			OrchestratorActionType: &dtmbprotos.OrchestratorAction_ScheduleActivity{
+				ScheduleActivity: &dtmbprotos.ScheduleActivityOrchestratorAction{
+					Name:  task.GetTaskScheduled().GetName(),
+					Input: []byte(task.GetTaskScheduled().GetInput().GetValue()),
+					StartAt: &dtmbprotos.Delay{
+						Delayed: &dtmbprotos.Delay_Time{
+							Time: task.GetHistoryState().GetOrchestrationState().GetScheduledStartTimestamp(), // is this correct?
+						},
+					},
+				},
+			},
+		}
+		actions = append(actions, action)
+	}
+
+	for _, timer := range pendingTimers {
+		action := &dtmbprotos.OrchestratorAction{
+			OrchestratorActionType: &dtmbprotos.OrchestratorAction_CreateTimer{
+				CreateTimer: &dtmbprotos.CreateTimerOrchestratorAction{
+					StartAt: &dtmbprotos.Delay{
+						Delayed: &dtmbprotos.Delay_Time{
+							Time: timer.GetTimerCreated().GetFireAt(),
+						},
+					},
+				},
+			},
+		}
+		actions = append(actions, action)
+	}
+
+	for _, msg := range pendingMessages {
+		var action *dtmbprotos.OrchestratorAction
+		switch typedEvent := msg.HistoryEvent.GetEventType().(type) {
+		case *protos.HistoryEvent_EventSent:
+			action = &dtmbprotos.OrchestratorAction{
+				OrchestratorActionType: &dtmbprotos.OrchestratorAction_SendEvent{
+					SendEvent: &dtmbprotos.SendEventOrchestratorAction{
+						InstanceId: typedEvent.EventSent.GetInstanceId(), // or shoudl this be targetInstanceId?
+						Name:       typedEvent.EventSent.GetName(),
+						Data:       []byte(typedEvent.EventSent.GetInput().GetValue()),
+					},
+				},
+			}
+		case *protos.HistoryEvent_SubOrchestrationInstanceCreated:
+			action = &dtmbprotos.OrchestratorAction{
+				OrchestratorActionType: &dtmbprotos.OrchestratorAction_CreateSubOrchestration{
+					CreateSubOrchestration: &dtmbprotos.CreateSubOrchestrationOrchestratorAction{
+						OrchestrationId: typedEvent.SubOrchestrationInstanceCreated.GetInstanceId(),
+						Name:            typedEvent.SubOrchestrationInstanceCreated.GetName(),
+						Version:         typedEvent.SubOrchestrationInstanceCreated.GetVersion().GetValue(),
+						Input:           []byte(typedEvent.SubOrchestrationInstanceCreated.GetInput().GetValue()),
+						StartAt:         &dtmbprotos.Delay{
+							// Delayed: where should this come from?
+						},
+					},
+				},
+			}
+		// not sure whether timers can show up here also
+		case *protos.HistoryEvent_TimerCreated:
+			action = &dtmbprotos.OrchestratorAction{
+				OrchestratorActionType: &dtmbprotos.OrchestratorAction_CreateTimer{
+					CreateTimer: &dtmbprotos.CreateTimerOrchestratorAction{
+						StartAt: &dtmbprotos.Delay{
+							Delayed: &dtmbprotos.Delay_Time{
+								Time: typedEvent.TimerCreated.GetFireAt(),
+							},
+						},
+					},
+				},
+			}
+		// probably redundant here if this event is already in pendingTasks
+		case *protos.HistoryEvent_TaskScheduled:
+			action = &dtmbprotos.OrchestratorAction{
+				OrchestratorActionType: &dtmbprotos.OrchestratorAction_ScheduleActivity{
+					ScheduleActivity: &dtmbprotos.ScheduleActivityOrchestratorAction{
+						Name:  typedEvent.TaskScheduled.GetName(),
+						Input: []byte(typedEvent.TaskScheduled.GetInput().GetValue()),
+						StartAt: &dtmbprotos.Delay{
+							Delayed: &dtmbprotos.Delay_Time{
+								Time: msg.HistoryEvent.GetHistoryState().GetOrchestrationState().GetScheduledStartTimestamp(), // is this correct? Probably not
+							},
+						},
+					},
+				},
+			}
+		case *protos.HistoryEvent_ExecutionTerminated:
+			action = &dtmbprotos.OrchestratorAction{
+				OrchestratorActionType: &dtmbprotos.OrchestratorAction_TerminateOrchestration{
+					TerminateOrchestration: &dtmbprotos.TerminateOrchestrationOrchestratorAction{
+						NonRecursive: !typedEvent.ExecutionTerminated.GetRecurse(),
+						Reason:       []byte(typedEvent.ExecutionTerminated.GetInput().GetValue()),
+					},
+				},
+			}
+		case *protos.HistoryEvent_SubOrchestrationInstanceCompleted:
+			result := []byte(typedEvent.SubOrchestrationInstanceCompleted.GetResult().GetValue())
+
+			msg.HistoryEvent.GetExecutionCompleted().GetOrchestrationStatus()
+			action = &dtmbprotos.OrchestratorAction{
+				OrchestratorActionType: &dtmbprotos.OrchestratorAction_CompleteOrchestration{
+					CompleteOrchestration: &dtmbprotos.CompleteOrchestrationOrchestratorAction{
+						OrchestrationStatus: dtmbprotos.OrchestrationStatus_COMPLETED,
+						FailureDetails:      nil,
+						Result:              result,
+					},
+				},
+			}
+		case *protos.HistoryEvent_SubOrchestrationInstanceFailed:
+			failureDetails := utils.ConvertTaskFailureDetails(typedEvent.SubOrchestrationInstanceFailed.GetFailureDetails())
+
+			msg.HistoryEvent.GetExecutionCompleted().GetOrchestrationStatus()
+			action = &dtmbprotos.OrchestratorAction{
+				OrchestratorActionType: &dtmbprotos.OrchestratorAction_CompleteOrchestration{
+					CompleteOrchestration: &dtmbprotos.CompleteOrchestrationOrchestratorAction{
+						OrchestrationStatus: dtmbprotos.OrchestrationStatus_FAILED,
+						FailureDetails:      failureDetails,
+						Result:              nil,
+					},
+				},
+			}
+		}
+		actions = append(actions, action)
+	}
+	return actions
+}
+
 // CompleteOrchestrationWorkItem completes a work item by saving the updated runtime state to durable storage.
 func (d *dtmb) CompleteOrchestrationWorkItem(_ context.Context, item *backend.OrchestrationWorkItem) error {
 	completionToken := item.Properties["CompletionToken"].(string)
@@ -410,9 +553,12 @@ func (d *dtmb) CompleteOrchestrationWorkItem(_ context.Context, item *backend.Or
 				Version:         version,
 				CompletionToken: completionToken,
 				CustomStatus:    item.State.CustomStatus.GetValue(),
-				Actions:         nil, // TODO (cgillum, ItalyPaleAle): Determine whether the backend requires this
+				Actions:         extractActionsFromOrchestrationState(item.State),
 			},
 		},
+	}
+	if item.State.IsCompleted() {
+		d.orchestrationHistoryCache.EvictCacheForOrchestrationID(string(item.InstanceID))
 	}
 	return nil
 }
@@ -474,8 +620,6 @@ func (d *dtmb) GetActivityWorkItem(context.Context) (*backend.ActivityWorkItem, 
 }
 
 // CompleteActivityWorkItem sends a message to the parent orchestration indicating activity completion.
-//
-// Returns [ErrWorkItemLockLost] if the work-item couldn't be completed due to a lock-lost conflict (e.g., split-brain).
 func (d *dtmb) CompleteActivityWorkItem(_ context.Context, item *backend.ActivityWorkItem) error {
 	var result []byte = nil
 	if item.NewEvent.GetTaskCompleted() != nil {
@@ -496,7 +640,7 @@ func (d *dtmb) CompleteActivityWorkItem(_ context.Context, item *backend.Activit
 				Name:            activityName,
 				CompletionToken: completionToken,
 				Result:          result,
-				FailureDetails:  failureDetails, // which failures go here?
+				FailureDetails:  failureDetails,
 			},
 		},
 	}
@@ -533,8 +677,13 @@ func (d *dtmb) PurgeOrchestrationState(ctx context.Context, id api.InstanceID) e
 		},
 		NonRecursive: false,
 	})
-
-	// TODO: Check if the error is ErrInstanceNotFound or ErrNotCompleted
-
-	return err
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return api.ErrInstanceNotFound
+		} else {
+			return api.ErrNotCompleted
+		}
+	}
+	d.orchestrationHistoryCache.EvictCacheForOrchestrationID(string(id))
+	return nil
 }
