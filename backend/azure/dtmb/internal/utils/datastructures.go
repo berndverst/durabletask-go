@@ -2,6 +2,7 @@ package utils
 
 import (
 	"container/list"
+	"log"
 	"sync"
 
 	dtmbprotos "github.com/microsoft/durabletask-go/backend/azure/dtmb/internal/backend/v1"
@@ -72,6 +73,51 @@ func (q *SyncQueue[T]) PeekLast() *T {
 	}
 	var itemCopy T = *q.items[len(q.items)-1] //nolint:copylocks
 	return &itemCopy
+}
+
+type OrchestrationTaskCounter struct {
+	lock                    *sync.Mutex
+	orchestrationCounterMap map[string]int32
+	orchestrationTaskIDMap  map[string]map[uint64]int32
+}
+
+func NewOrchestrationTaskIDManager() OrchestrationTaskCounter {
+	return OrchestrationTaskCounter{
+		lock:                    &sync.Mutex{},
+		orchestrationCounterMap: make(map[string]int32),
+		orchestrationTaskIDMap:  make(map[string]map[uint64]int32),
+	}
+}
+
+func (o *OrchestrationTaskCounter) GetTaskNumber(orchestrationID string, sequenceNumber uint64) int32 {
+	o.lock.Lock()
+	defer o.lock.Unlock()
+
+	if _, ok := o.orchestrationCounterMap[orchestrationID]; !ok {
+		o.orchestrationCounterMap[orchestrationID] = 0
+		o.orchestrationTaskIDMap[orchestrationID] = make(map[uint64]int32)
+	} else {
+		if _, ok := o.orchestrationTaskIDMap[orchestrationID][sequenceNumber]; ok {
+			return o.orchestrationTaskIDMap[orchestrationID][sequenceNumber]
+		}
+	}
+
+	// we assign the previous counter value for the sequence ID and orchestration ID combination
+	o.orchestrationTaskIDMap[orchestrationID][sequenceNumber] = o.orchestrationCounterMap[orchestrationID]
+	// increment the counter for the next time
+	o.orchestrationCounterMap[orchestrationID]++
+
+	return o.orchestrationTaskIDMap[orchestrationID][sequenceNumber]
+}
+
+func (o *OrchestrationTaskCounter) PurgeOrchestration(orchestrationID string) {
+	o.lock.Lock()
+	defer o.lock.Unlock()
+
+	if _, ok := o.orchestrationTaskIDMap[orchestrationID]; ok {
+		delete(o.orchestrationTaskIDMap, orchestrationID)
+		delete(o.orchestrationCounterMap, orchestrationID)
+	}
 }
 
 type OrchestrationHistoryCache struct {
@@ -149,10 +195,15 @@ func (o *OrchestrationHistoryCache) AddHistoryEventsForOrchestrationID(orchestra
 }
 
 func (o *OrchestrationHistoryCache) EvictCacheForOrchestrationID(orchestrationID string) {
+	log.Println("=== Evicting cache for orchestrationID: ", orchestrationID)
 	o.lock.Lock()
 	defer o.lock.Unlock()
 	if element, ok := o.cache[orchestrationID]; ok {
 		delete(o.cache, orchestrationID)
 		o.list.Remove(element)
 	}
+}
+
+func LookUpTaskID(orchestrationId string, sequenceNumber int) int {
+	return 0
 }
