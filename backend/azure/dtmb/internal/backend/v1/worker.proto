@@ -70,6 +70,10 @@ message EstablishWorkerConnectionMessage {
     // Maximum number of work items concurrently active on a worker across all types.
     // A value of 0 means no limit
     uint32 concurrent_limit = 10 [json_name = "concurrentLimit"];
+    // Maximum number of orchestration work items concurrently active on a worker across all orchestration types.
+    uint32 concurrent_orchestrations_limit = 11 [json_name = "concurrentOrchestrationsLimit"];
+    // Maximum number of activity work items concurrently active on a worker across all orchestration types.
+    uint32 concurrent_activities_limit = 12 [json_name = "concurrentActivitiesLimit"];
     // List of supported orchestrator functions.
     repeated OrchestratorFunctionType orchestrator_function = 20 [json_name = "orchestratorFunction"];
     // List of supported activity functions.
@@ -258,4 +262,5 @@ message GetOrchestrationHistoryResponse {
     // List of history events.
     // The list may start with an event with sequence number greater than 0 if the request contained a last_item that matched an item in the history stack.
     repeated Event events = 1;
+    bool is_restarted = 2 [json_name = "isRestarted"];
 }

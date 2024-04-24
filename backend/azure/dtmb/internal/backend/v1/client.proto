@@ -46,8 +46,6 @@ message CreateOrchestrationRequest {
 message CreateOrchestrationResponse {
     // ID of the orchestration
     string orchestration_id = 1 [json_name = "orchestrationId"];
-    // ID of the execution
-    string execution_id = 2 [json_name = "executionId"];
 }
 
 message OrchestrationIDReusePolicy {
@@ -111,5 +109,5 @@ message PurgeOrchestrationRequest {
 }
 
 message PurgeOrchestrationResponse {
-    uint32 deleted_count = 1 [json_name = "deletedCount"];
+    repeated string orchestration_ids = 1 [json_name = "orchestrationIds"];
 }

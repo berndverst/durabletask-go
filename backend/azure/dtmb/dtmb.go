@@ -255,7 +255,7 @@ func (d *dtmb) AddNewOrchestrationEvent(ctx context.Context, id api.InstanceID, 
 		req := dtmbprotos.RaiseEventRequest{
 			OrchestrationId: string(id),
 			Name:            typedEvent.EventRaised.GetName(),
-			Input:           []byte(typedEvent.EventRaised.GetInput().GetValue()), // or should this be backend.MarshalHistoryEvent(event)?
+			Input:           []byte(typedEvent.EventRaised.GetInput().GetValue()),
 		}
 
 		_, err = d.client.RaiseEvent(ctx, &req)
