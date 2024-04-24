@@ -6,6 +6,7 @@ option go_package = "github.com/microsoft/dtmb-go/protos/backend/v1;backend";
 option csharp_namespace = "Microsoft.DTMB.Backend.Autogen.Grpc.v1";
 
 import "google/protobuf/duration.proto";
+
 import "backend/v1/common.proto";
 import "backend/v1/events.proto";
 import "backend/v1/orchestrator-actions.proto";
@@ -108,6 +109,8 @@ message CompleteOrchestrationMessage {
     string completion_token = 5 [json_name = "completionToken"];
     // Custom status to update (optional).
     string custom_status = 10 [json_name = "customStatus"];
+    // If true, resets the custom status, removing the existing one (optional).
+    bool reset_custom_status = 11 [json_name = "resetCustomStatus"];
     // Actions to schedule.
     repeated OrchestratorAction actions = 20;
 }
@@ -244,7 +247,7 @@ message GetOrchestrationHistoryRequest {
     string orchestration_id = 1 [json_name = "orchestrationId"];
     // Last sequence number of the item in the history stack that is cached on the worker.
     // If this is empty or zero, returns the entire history.
-    uint64 last_item_sequence_number = 10 [json_name = "lastItemSequenceNumber"];
+    int64 last_item_sequence_number = 10 [json_name = "lastItemSequenceNumber"];
     // Hash of the last item in the history stack that is cached on the worker.
     // If this is empty, returns the entire history.
     bytes last_item_event_hash = 11 [json_name = "lastItemEventHash"];
@@ -254,5 +257,5 @@ message GetOrchestrationHistoryRequest {
 message GetOrchestrationHistoryResponse {
     // List of history events.
     // The list may start with an event with sequence number greater than 0 if the request contained a last_item that matched an item in the history stack.
-    repeated Event event = 1;
+    repeated Event events = 1;
 }

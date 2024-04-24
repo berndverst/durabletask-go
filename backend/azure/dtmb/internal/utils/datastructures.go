@@ -78,24 +78,24 @@ func (q *SyncQueue[T]) PeekLast() *T {
 type OrchestrationTaskCounter struct {
 	lock                    *sync.Mutex
 	orchestrationCounterMap map[string]int32
-	orchestrationTaskIDMap  map[string]map[uint64]int32
+	orchestrationTaskIDMap  map[string]map[int64]int32
 }
 
 func NewOrchestrationTaskIDManager() OrchestrationTaskCounter {
 	return OrchestrationTaskCounter{
 		lock:                    &sync.Mutex{},
 		orchestrationCounterMap: make(map[string]int32),
-		orchestrationTaskIDMap:  make(map[string]map[uint64]int32),
+		orchestrationTaskIDMap:  make(map[string]map[int64]int32),
 	}
 }
 
-func (o *OrchestrationTaskCounter) GetTaskNumber(orchestrationID string, sequenceNumber uint64) int32 {
+func (o *OrchestrationTaskCounter) GetTaskNumber(orchestrationID string, sequenceNumber int64) int32 {
 	o.lock.Lock()
 	defer o.lock.Unlock()
 
 	if _, ok := o.orchestrationCounterMap[orchestrationID]; !ok {
 		o.orchestrationCounterMap[orchestrationID] = 0
-		o.orchestrationTaskIDMap[orchestrationID] = make(map[uint64]int32)
+		o.orchestrationTaskIDMap[orchestrationID] = make(map[int64]int32)
 	} else {
 		if _, ok := o.orchestrationTaskIDMap[orchestrationID][sequenceNumber]; ok {
 			return o.orchestrationTaskIDMap[orchestrationID][sequenceNumber]

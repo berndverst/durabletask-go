@@ -301,7 +301,7 @@ func (d *dtmb) getOrchestrationHistory(ctx context.Context, orchestrationID stri
 		return nil, err
 	}
 
-	events := res.GetEvent()
+	events := res.GetEvents()
 
 	if len(events) != 0 {
 		if events[0].SequenceNumber == 0 && historyRequest.LastItemSequenceNumber != 0 {
