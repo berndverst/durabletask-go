@@ -64,11 +64,12 @@ func convertExecutionStartedEvent(typedEvent *dtmbprotos.Event_ExecutionStarted)
 				},
 			},
 			ScheduledStartTimestamp: typedEvent.ExecutionStarted.GetScheduledTime(),
-			ParentTraceContext: &protos.TraceContext{
-				TraceParent: typedEvent.ExecutionStarted.GetTraceContext().GetTraceParent(),
-				SpanID:      typedEvent.ExecutionStarted.GetTraceContext().GetSpanId(),
-				TraceState:  WrapString(typedEvent.ExecutionStarted.GetTraceContext().GetTraceState()),
-			},
+			ParentTraceContext:      nil,
+			//&protos.TraceContext{
+			// TraceParent: typedEvent.ExecutionStarted.GetTraceContext().GetTraceParent(),  // failed to parse trace context: hex encoded trace-id must have length equals to 32
+			// SpanID:      typedEvent.ExecutionStarted.GetTraceContext().GetSpanId(),
+			// TraceState: WrapString(typedEvent.ExecutionStarted.GetTraceContext().GetTraceState()),
+			//},
 			// TODO (ItalyPaleAle): implement tracing
 			// OrchestrationSpanID: &wrapperspb.StringValue{},
 		},
@@ -78,7 +79,7 @@ func convertExecutionStartedEvent(typedEvent *dtmbprotos.Event_ExecutionStarted)
 func convertExecutionCompletedEvent(typedEvent *dtmbprotos.Event_ExecutionCompleted) *protos.HistoryEvent_ExecutionCompleted {
 	return &protos.HistoryEvent_ExecutionCompleted{
 		ExecutionCompleted: &protos.ExecutionCompletedEvent{
-			OrchestrationStatus: protos.OrchestrationStatus(typedEvent.ExecutionCompleted.GetOrchestrationStatus()),
+			OrchestrationStatus: ConvertOrchestrationStatusToDTMB(typedEvent.ExecutionCompleted.GetOrchestrationStatus()),
 			Result:              ToStringWrapper(typedEvent.ExecutionCompleted.GetResult()),
 			FailureDetails:      ConvertFailureDetails(typedEvent.ExecutionCompleted.GetFailureDetails()),
 		},
@@ -138,11 +139,12 @@ func convertActivityScheduledEvent(typedEvent *dtmbprotos.Event_ActivitySchedule
 			Name:  typedEvent.ActivityScheduled.GetName(),
 			Input: ToStringWrapper(typedEvent.ActivityScheduled.GetInput()), // what if this is not string
 			// Version  // Activities are not versioned in DTMB
-			ParentTraceContext: &protos.TraceContext{
-				TraceParent: typedEvent.ActivityScheduled.GetParentTraceContext().GetTraceParent(),
-				SpanID:      typedEvent.ActivityScheduled.GetParentTraceContext().GetSpanId(),
-				TraceState:  WrapString(typedEvent.ActivityScheduled.GetParentTraceContext().GetTraceState()),
-			},
+			ParentTraceContext: nil,
+			// &protos.TraceContext{
+			// TraceParent: typedEvent.ActivityScheduled.GetParentTraceContext().GetTraceParent(), // failed to parse trace context: hex encoded trace-id must have length equals to 32
+			// SpanID:      typedEvent.ActivityScheduled.GetParentTraceContext().GetSpanId(),
+			// TraceState:  WrapString(typedEvent.ActivityScheduled.GetParentTraceContext().GetTraceState()),
+			// },
 		},
 	}
 }
@@ -188,7 +190,7 @@ func convertHistoryStateEvent(typedEvent *dtmbprotos.Event_HistoryState) *protos
 	return &protos.HistoryEvent_HistoryState{
 		HistoryState: &protos.HistoryStateEvent{
 			OrchestrationState: &protos.OrchestrationState{
-				OrchestrationStatus: protos.OrchestrationStatus(typedEvent.HistoryState.GetOrchestrationStatus()),
+				OrchestrationStatus: ConvertOrchestrationStatusToDTMB(typedEvent.HistoryState.GetOrchestrationStatus()),
 			},
 		},
 	}
@@ -209,15 +211,16 @@ func convertOrchestratorCompletedEvent(_ *dtmbprotos.Event_OrchestratorCompleted
 func convertSuborchestrationInstanceCreatedEvent(typedEvent *dtmbprotos.Event_SubOrchestrationInstanceCreated) *protos.HistoryEvent_SubOrchestrationInstanceCreated {
 	return &protos.HistoryEvent_SubOrchestrationInstanceCreated{
 		SubOrchestrationInstanceCreated: &protos.SubOrchestrationInstanceCreatedEvent{
-			InstanceId: typedEvent.SubOrchestrationInstanceCreated.GetOrchestrationId(),
-			Name:       typedEvent.SubOrchestrationInstanceCreated.GetName(),
-			Version:    WrapString(typedEvent.SubOrchestrationInstanceCreated.GetVersion()),
-			Input:      ToStringWrapper(typedEvent.SubOrchestrationInstanceCreated.GetInput()),
-			ParentTraceContext: &protos.TraceContext{
-				TraceParent: typedEvent.SubOrchestrationInstanceCreated.GetParentTraceContext().GetTraceParent(),
-				SpanID:      typedEvent.SubOrchestrationInstanceCreated.GetParentTraceContext().GetSpanId(),
-				TraceState:  WrapString(typedEvent.SubOrchestrationInstanceCreated.GetParentTraceContext().GetTraceState()),
-			},
+			InstanceId:         typedEvent.SubOrchestrationInstanceCreated.GetOrchestrationId(),
+			Name:               typedEvent.SubOrchestrationInstanceCreated.GetName(),
+			Version:            WrapString(typedEvent.SubOrchestrationInstanceCreated.GetVersion()),
+			Input:              ToStringWrapper(typedEvent.SubOrchestrationInstanceCreated.GetInput()),
+			ParentTraceContext: nil,
+			// &protos.TraceContext{
+			// Parent: typedEvent.SubOrchestrationInstanceCreated.GetParentTraceContext().GetTraceParent(), // failed to parse trace context: hex encoded trace-id must have length equals to 32
+			// SpanID:      typedEvent.SubOrchestrationInstanceCreated.GetParentTraceContext().GetSpanId(),
+			// TraceState:  WrapString(typedEvent.SubOrchestrationInstanceCreated.GetParentTraceContext().GetTraceState()),
+			// },
 		},
 	}
 }
@@ -392,11 +395,58 @@ func ConvertEvents(orchestrationID string, taskIDManager *OrchestrationTaskCount
 	historyEvents := make([]*protos.HistoryEvent, len(events))
 
 	for i, item := range events {
+		// prettyprint the event
+		fmt.Printf("=============== Incoming Event: %v\n", item)
+
 		convertedItem, err := ConvertEvent(orchestrationID, taskIDManager, item)
 		if err != nil {
 			return nil, err
 		}
 		historyEvents[i] = convertedItem
+		fmt.Printf("================= Converted incoming Event: %v\n", convertedItem)
 	}
 	return historyEvents, nil
+}
+
+func ConvertOrchestrationStatusFromDTMB(status protos.OrchestrationStatus) dtmbprotos.OrchestrationStatus {
+	switch status {
+	case protos.OrchestrationStatus_ORCHESTRATION_STATUS_COMPLETED:
+		return dtmbprotos.OrchestrationStatus_COMPLETED
+	case protos.OrchestrationStatus_ORCHESTRATION_STATUS_FAILED:
+		return dtmbprotos.OrchestrationStatus_FAILED
+	case protos.OrchestrationStatus_ORCHESTRATION_STATUS_CANCELED:
+		return dtmbprotos.OrchestrationStatus_CANCELED
+	case protos.OrchestrationStatus_ORCHESTRATION_STATUS_RUNNING:
+		return dtmbprotos.OrchestrationStatus_RUNNING
+	case protos.OrchestrationStatus_ORCHESTRATION_STATUS_TERMINATED:
+		return dtmbprotos.OrchestrationStatus_TERMINATED
+	case protos.OrchestrationStatus_ORCHESTRATION_STATUS_CONTINUED_AS_NEW:
+		return dtmbprotos.OrchestrationStatus_CONTINUED_AS_NEW
+	case protos.OrchestrationStatus_ORCHESTRATION_STATUS_PENDING:
+		return dtmbprotos.OrchestrationStatus_PENDING
+	}
+	return dtmbprotos.OrchestrationStatus_UNKNOWN
+}
+
+func ConvertOrchestrationStatusToDTMB(status dtmbprotos.OrchestrationStatus) protos.OrchestrationStatus {
+	switch status {
+	case dtmbprotos.OrchestrationStatus_COMPLETED:
+		return protos.OrchestrationStatus_ORCHESTRATION_STATUS_COMPLETED
+	case dtmbprotos.OrchestrationStatus_FAILED:
+		return protos.OrchestrationStatus_ORCHESTRATION_STATUS_FAILED
+	case dtmbprotos.OrchestrationStatus_CANCELED:
+		return protos.OrchestrationStatus_ORCHESTRATION_STATUS_CANCELED
+	case dtmbprotos.OrchestrationStatus_RUNNING:
+		return protos.OrchestrationStatus_ORCHESTRATION_STATUS_RUNNING
+	case dtmbprotos.OrchestrationStatus_TERMINATED:
+		return protos.OrchestrationStatus_ORCHESTRATION_STATUS_TERMINATED
+	case dtmbprotos.OrchestrationStatus_CONTINUED_AS_NEW:
+		return protos.OrchestrationStatus_ORCHESTRATION_STATUS_CONTINUED_AS_NEW
+	case dtmbprotos.OrchestrationStatus_PENDING:
+		return protos.OrchestrationStatus_ORCHESTRATION_STATUS_PENDING
+	case dtmbprotos.OrchestrationStatus_UNKNOWN:
+		// There is no unknown but this seems like a failure
+		return protos.OrchestrationStatus_ORCHESTRATION_STATUS_FAILED
+	}
+	return protos.OrchestrationStatus_ORCHESTRATION_STATUS_FAILED
 }

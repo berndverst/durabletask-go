@@ -336,16 +336,17 @@ func (d *dtmb) GetOrchestrationWorkItem(ctx context.Context) (*backend.Orchestra
 		return nil, err
 	}
 
-	convertedNewEvents, err := utils.ConvertEvents(item.GetOrchestrationId(), &d.orchestrationTaskIDManager, item.GetNewEvents())
-	if err != nil {
-		return nil, err
-	}
-
 	convertedHistoryEvents, err := utils.ConvertEvents(item.GetOrchestrationId(), &d.orchestrationTaskIDManager, actualHistoryEvents)
 	if err != nil {
 		return nil, err
 	}
+
 	orchestationRuntimeState := backend.NewOrchestrationRuntimeState(api.InstanceID(item.GetOrchestrationId()), convertedHistoryEvents)
+
+	convertedNewEvents, err := utils.ConvertEvents(item.GetOrchestrationId(), &d.orchestrationTaskIDManager, item.GetNewEvents())
+	if err != nil {
+		return nil, err
+	}
 
 	ret = &backend.OrchestrationWorkItem{
 		InstanceID: api.InstanceID(item.GetOrchestrationId()),
@@ -397,7 +398,7 @@ func (d *dtmb) GetOrchestrationMetadata(ctx context.Context, id api.InstanceID) 
 	ret := &api.OrchestrationMetadata{
 		InstanceID:             id,
 		Name:                   resp.Name,
-		RuntimeStatus:          protos.OrchestrationStatus(resp.GetOrchestrationStatus()),
+		RuntimeStatus:          utils.ConvertOrchestrationStatusToDTMB(resp.GetOrchestrationStatus()),
 		CreatedAt:              resp.GetCreatedAt().AsTime(),
 		LastUpdatedAt:          resp.GetLastUpdatedAt().AsTime(),
 		SerializedInput:        string(resp.GetInput()),
@@ -462,7 +463,7 @@ func extractActionsFromOrchestrationState(state *backend.OrchestrationRuntimeSta
 	}
 
 	for _, msg := range newEvents {
-		var action *dtmbprotos.OrchestratorAction
+		var action *dtmbprotos.OrchestratorAction = nil
 		switch typedEvent := msg.GetEventType().(type) {
 		case *protos.HistoryEvent_EventSent:
 			action = &dtmbprotos.OrchestratorAction{
@@ -496,7 +497,7 @@ func extractActionsFromOrchestrationState(state *backend.OrchestrationRuntimeSta
 			action = &dtmbprotos.OrchestratorAction{
 				OrchestratorActionType: &dtmbprotos.OrchestratorAction_CompleteOrchestration{
 					CompleteOrchestration: &dtmbprotos.CompleteOrchestrationOrchestratorAction{
-						OrchestrationStatus: dtmbprotos.OrchestrationStatus(typedEvent.ExecutionCompleted.OrchestrationStatus),
+						OrchestrationStatus: utils.ConvertOrchestrationStatusFromDTMB(typedEvent.ExecutionCompleted.GetOrchestrationStatus()),
 						FailureDetails:      failureDetails,
 						Result:              result,
 					},
@@ -527,7 +528,9 @@ func extractActionsFromOrchestrationState(state *backend.OrchestrationRuntimeSta
 			// 		},
 			// 	}
 		}
-		actions = append(actions, action)
+		if action != nil {
+			actions = append(actions, action)
+		}
 	}
 	return actions
 }
@@ -538,7 +541,7 @@ func (d *dtmb) CompleteOrchestrationWorkItem(_ context.Context, item *backend.Or
 	orchestrationName := item.Properties["OrchestrationName"].(string)
 	version := item.Properties["Version"].(string)
 
-	d.connectWorkerClientStream <- &dtmbprotos.ConnectWorkerClientMessage{
+	completionMessage := &dtmbprotos.ConnectWorkerClientMessage{
 		Message: &dtmbprotos.ConnectWorkerClientMessage_CompleteOrchestration{
 			CompleteOrchestration: &dtmbprotos.CompleteOrchestrationMessage{
 				OrchestrationId: string(item.InstanceID),
@@ -550,10 +553,15 @@ func (d *dtmb) CompleteOrchestrationWorkItem(_ context.Context, item *backend.Or
 			},
 		},
 	}
+
+	d.connectWorkerClientStream <- completionMessage
 	if item.State.IsCompleted() {
 		d.orchestrationHistoryCache.EvictCacheForOrchestrationID(string(item.InstanceID))
 		d.orchestrationTaskIDManager.PurgeOrchestration((string(item.InstanceID)))
 	}
+
+	fmt.Printf("=============== CompleteOrchestrationWorkItem: %v\n", completionMessage)
+
 	return nil
 }
 
@@ -616,12 +624,13 @@ func (d *dtmb) GetActivityWorkItem(context.Context) (*backend.ActivityWorkItem, 
 // CompleteActivityWorkItem sends a message to the parent orchestration indicating activity completion.
 func (d *dtmb) CompleteActivityWorkItem(_ context.Context, item *backend.ActivityWorkItem) error {
 	var result []byte = nil
-	if item.NewEvent.GetTaskCompleted() != nil {
-		result = []byte(item.NewEvent.GetTaskCompleted().GetResult().GetValue())
+
+	if item.Result.GetTaskCompleted() != nil {
+		result = []byte(item.Result.GetTaskCompleted().GetResult().GetValue())
 	}
 	var failureDetails *dtmbprotos.FailureDetails = nil
 	if item.NewEvent.GetTaskFailed() != nil {
-		failureDetails = utils.ConvertTaskFailureDetails(item.NewEvent.GetTaskFailed().GetFailureDetails())
+		failureDetails = utils.ConvertTaskFailureDetails(item.Result.GetTaskFailed().GetFailureDetails())
 	}
 
 	completionToken := item.Properties["CompletionToken"].(string)
