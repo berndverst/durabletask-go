@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/microsoft/durabletask-go/backend/azure/dtmb/internal/backend/v1"
+	"github.com/microsoft/durabletask-go/backend/azure/durabletaskservice/internal/backend/v1"
 	"google.golang.org/grpc/metadata"
 )
 

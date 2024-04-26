@@ -6,7 +6,7 @@ import (
 	"github.com/microsoft/durabletask-go/internal/protos"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
-	dtmbprotos "github.com/microsoft/durabletask-go/backend/azure/dtmb/internal/backend/v1"
+	dtmbprotos "github.com/microsoft/durabletask-go/backend/azure/durabletaskservice/internal/backend/v1"
 )
 
 func ToStringWrapper(data []byte) *wrapperspb.StringValue {
@@ -79,7 +79,7 @@ func convertExecutionStartedEvent(typedEvent *dtmbprotos.Event_ExecutionStarted)
 func convertExecutionCompletedEvent(typedEvent *dtmbprotos.Event_ExecutionCompleted) *protos.HistoryEvent_ExecutionCompleted {
 	return &protos.HistoryEvent_ExecutionCompleted{
 		ExecutionCompleted: &protos.ExecutionCompletedEvent{
-			OrchestrationStatus: ConvertOrchestrationStatusToDTMB(typedEvent.ExecutionCompleted.GetOrchestrationStatus()),
+			OrchestrationStatus: ConvertOrchestrationStatusToDurableTaskServiceBackend(typedEvent.ExecutionCompleted.GetOrchestrationStatus()),
 			Result:              ToStringWrapper(typedEvent.ExecutionCompleted.GetResult()),
 			FailureDetails:      ConvertFailureDetails(typedEvent.ExecutionCompleted.GetFailureDetails()),
 		},
@@ -138,7 +138,7 @@ func convertActivityScheduledEvent(typedEvent *dtmbprotos.Event_ActivitySchedule
 		TaskScheduled: &protos.TaskScheduledEvent{
 			Name:  typedEvent.ActivityScheduled.GetName(),
 			Input: ToStringWrapper(typedEvent.ActivityScheduled.GetInput()), // what if this is not string
-			// Version  // Activities are not versioned in DTMB
+			// Version  // Activities are not versioned in DurableTaskServiceBackend
 			ParentTraceContext: nil,
 			// &protos.TraceContext{
 			// TraceParent: typedEvent.ActivityScheduled.GetParentTraceContext().GetTraceParent(), // failed to parse trace context: hex encoded trace-id must have length equals to 32
@@ -190,7 +190,7 @@ func convertHistoryStateEvent(typedEvent *dtmbprotos.Event_HistoryState) *protos
 	return &protos.HistoryEvent_HistoryState{
 		HistoryState: &protos.HistoryStateEvent{
 			OrchestrationState: &protos.OrchestrationState{
-				OrchestrationStatus: ConvertOrchestrationStatusToDTMB(typedEvent.HistoryState.GetOrchestrationStatus()),
+				OrchestrationStatus: ConvertOrchestrationStatusToDurableTaskServiceBackend(typedEvent.HistoryState.GetOrchestrationStatus()),
 			},
 		},
 	}
@@ -408,7 +408,7 @@ func ConvertEvents(orchestrationID string, taskIDManager *OrchestrationTaskCount
 	return historyEvents, nil
 }
 
-func ConvertOrchestrationStatusFromDTMB(status protos.OrchestrationStatus) dtmbprotos.OrchestrationStatus {
+func ConvertOrchestrationStatusFromDurableTaskServiceBackend(status protos.OrchestrationStatus) dtmbprotos.OrchestrationStatus {
 	switch status {
 	case protos.OrchestrationStatus_ORCHESTRATION_STATUS_COMPLETED:
 		return dtmbprotos.OrchestrationStatus_COMPLETED
@@ -428,7 +428,7 @@ func ConvertOrchestrationStatusFromDTMB(status protos.OrchestrationStatus) dtmbp
 	return dtmbprotos.OrchestrationStatus_UNKNOWN
 }
 
-func ConvertOrchestrationStatusToDTMB(status dtmbprotos.OrchestrationStatus) protos.OrchestrationStatus {
+func ConvertOrchestrationStatusToDurableTaskServiceBackend(status dtmbprotos.OrchestrationStatus) protos.OrchestrationStatus {
 	switch status {
 	case dtmbprotos.OrchestrationStatus_COMPLETED:
 		return protos.OrchestrationStatus_ORCHESTRATION_STATUS_COMPLETED

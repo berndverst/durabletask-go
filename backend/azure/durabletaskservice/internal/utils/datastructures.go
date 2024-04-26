@@ -5,7 +5,7 @@ import (
 	"log"
 	"sync"
 
-	dtmbprotos "github.com/microsoft/durabletask-go/backend/azure/dtmb/internal/backend/v1"
+	dtmbprotos "github.com/microsoft/durabletask-go/backend/azure/durabletaskservice/internal/backend/v1"
 )
 
 const (

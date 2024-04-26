@@ -1,4 +1,4 @@
-package dtmb
+package durabletaskservice
 
 import (
 	"context"
@@ -8,6 +8,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/microsoft/durabletask-go/api"
 	"github.com/microsoft/durabletask-go/backend"
 	"github.com/microsoft/durabletask-go/internal/protos"
@@ -18,12 +21,12 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
-	dtmbprotos "github.com/microsoft/durabletask-go/backend/azure/dtmb/internal/backend/v1"
-	"github.com/microsoft/durabletask-go/backend/azure/dtmb/internal/utils"
+	dtmbprotos "github.com/microsoft/durabletask-go/backend/azure/durabletaskservice/internal/backend/v1"
+	"github.com/microsoft/durabletask-go/backend/azure/durabletaskservice/internal/utils"
 )
 
 const (
-	// DefaultEndpoint is the default endpoint for the DTMB service.
+	// DefaultEndpoint is the default endpoint for the DurableTaskServiceBackend service.
 	defaultEndpoint = "localhost:50051"
 )
 
@@ -32,10 +35,10 @@ type TaskHubClient struct {
 	dtmbprotos.TaskHubWorkerClient
 }
 
-type dtmb struct {
+type durableTaskService struct {
 	logger                     backend.Logger
 	endpoint                   string
-	options                    *DTMBOptions
+	options                    *DurableTaskServiceBackendOptions
 	orchestrationQueue         utils.SyncQueue[dtmbprotos.ExecuteOrchestrationMessage]
 	activityQueue              utils.SyncQueue[dtmbprotos.ExecuteActivityMessage]
 	orchestrationHistoryCache  utils.OrchestrationHistoryCache
@@ -46,29 +49,131 @@ type dtmb struct {
 	orchestrationTaskIDManager utils.OrchestrationTaskCounter
 }
 
-type DTMBOptions struct {
-	Endpoint string
+type DurableTaskServiceBackendOptions struct {
+	Endpoint        string
+	TaskHubHubName  string
+	ResourceScope   string
+	TenantID        string
+	ClientID        string
+	AzureCredential azcore.TokenCredential
 }
 
-func NewDTMBOptions(endpoint string) *DTMBOptions {
-	if endpoint != "" {
-		return &DTMBOptions{
-			Endpoint: endpoint,
-		}
-	} else {
-		return &DTMBOptions{
-			Endpoint: defaultEndpoint,
-		}
+type azureGrpcCredentials struct {
+	token               *azcore.AccessToken
+	TokenOptions        policy.TokenRequestOptions
+	logger              backend.Logger
+	azureCredential     azcore.TokenCredential
+	disableTokenRefresh bool
+}
+
+func newAzureGrpcCredentials(ctx context.Context, cred azcore.TokenCredential, scope string, tenantId string, logger backend.Logger, disableTokenRefresh bool) (azureGrpcCredentials, error) {
+	tokenOptions := policy.TokenRequestOptions{}
+	if scope != "" {
+		tokenOptions.Scopes = []string{scope}
+	}
+	if tenantId != "" {
+		tokenOptions.TenantID = tenantId
+	}
+
+	credential := azureGrpcCredentials{
+		TokenOptions:        tokenOptions,
+		disableTokenRefresh: disableTokenRefresh,
+		logger:              logger,
+		token:               nil,
+		azureCredential:     cred,
+	}
+
+	// grab a token and start the token refresh goroutine
+	tokenErr := credential.UpdateToken(ctx)
+	if tokenErr != nil {
+		return azureGrpcCredentials{logger: logger}, fmt.Errorf("failed to get access token: %v", tokenErr)
+	}
+
+	if !disableTokenRefresh {
+		go func() {
+			for {
+				select {
+				case <-time.After(time.Until(credential.GetTokenRefreshTime())):
+					log.Println("Refreshing access token")
+					tokenErr := credential.UpdateToken(ctx)
+					if tokenErr != nil {
+						logger.Errorf("failed to update access token: %v", tokenErr)
+					}
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+
+	return credential, nil
+}
+
+func (c azureGrpcCredentials) GetTokenRefreshTime() time.Time {
+	if c.token == nil {
+		return time.Now()
+	}
+	// we refresh the token 2 minutes before it expires
+	return c.token.ExpiresOn.Add(-2 * time.Minute)
+}
+
+func (c azureGrpcCredentials) GetToken() string {
+	if c.token == nil {
+		c.logger.Debug("Token is nil. Returning empty string.")
+		return ""
+	}
+	c.logger.Debug("Token: %s", c.token.Token)
+	return c.token.Token
+}
+
+func (c *azureGrpcCredentials) UpdateToken(ctx context.Context) error {
+	c.logger.Debug("Updating token")
+	token, tokenErr := c.azureCredential.GetToken(ctx, c.TokenOptions)
+	if tokenErr == nil {
+		c.token = &token
+	}
+
+	return tokenErr
+}
+
+func (c azureGrpcCredentials) GetRequestMetadata(ctx context.Context, uri ...string) (map[string]string, error) {
+	return map[string]string{
+		"Authorization": "Bearer " + c.GetToken(),
+	}, nil
+}
+
+func (c azureGrpcCredentials) RequireTransportSecurity() bool {
+	return false
+}
+
+func NewDurableTaskServiceBackendOptions(endpoint string, taskHubName string, resourceScope string, credential azcore.TokenCredential, tenantID string, clientID string) *DurableTaskServiceBackendOptions {
+	if endpoint == "" {
+		endpoint = defaultEndpoint
+	}
+	if taskHubName == "" {
+		taskHubName = "default"
+	}
+	return &DurableTaskServiceBackendOptions{
+		Endpoint:        endpoint,
+		TaskHubHubName:  taskHubName,
+		ResourceScope:   resourceScope,
+		AzureCredential: credential,
+		TenantID:        "",
+		ClientID:        "",
 	}
 }
 
-func NewDTMB(opts *DTMBOptions, logger backend.Logger) (backend.Backend, error) {
-	be := &dtmb{
+func NewDurableTaskServiceBackend(opts *DurableTaskServiceBackendOptions, logger backend.Logger) (backend.Backend, error) {
+	be := &durableTaskService{
 		logger: logger,
 	}
 
 	if opts == nil {
-		opts = NewDTMBOptions(defaultEndpoint)
+		credential, err := azidentity.NewDefaultAzureCredential(nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get default azure credentials: %v", err)
+		}
+		opts = NewDurableTaskServiceBackendOptions(defaultEndpoint, "default", "", credential, "", "")
 	}
 	be.options = opts
 	be.endpoint = opts.Endpoint
@@ -81,8 +186,15 @@ func NewDTMB(opts *DTMBOptions, logger backend.Logger) (backend.Backend, error) 
 	be.orchestrationTaskIDManager = utils.NewOrchestrationTaskIDManager()
 
 	ctx := context.Background()
+	creds, err := newAzureGrpcCredentials(ctx, be.options.AzureCredential, "", "", logger, true)
+	if err != nil {
+		logger.Error("failed to get azure credentials: ", err)
+		// DURING DEVELOPMENT: Proceed anyway
+		// TODO: return error
+		// return nil, fmt.Errorf("failed to get azure credentials: %v", err)
+	}
 	connCtx, connCancel := context.WithTimeout(ctx, 15*time.Second) // TODO: make this a configurable timeout
-	conn, err := grpc.DialContext(connCtx, be.endpoint, grpc.WithBlock(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.DialContext(connCtx, be.endpoint, grpc.WithBlock(), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithPerRPCCredentials(creds))
 	connCancel()
 
 	if err != nil {
@@ -93,7 +205,6 @@ func NewDTMB(opts *DTMBOptions, logger backend.Logger) (backend.Backend, error) 
 		TaskHubClientClient: dtmbprotos.NewTaskHubClientClient(conn),
 		TaskHubWorkerClient: dtmbprotos.NewTaskHubWorkerClient(conn),
 	}
-	dtmbprotos.NewTaskHubClientClient(conn)
 
 	return be, nil
 }
@@ -103,7 +214,7 @@ func NewDTMB(opts *DTMBOptions, logger backend.Logger) (backend.Backend, error) 
 // Task hub creation is not performed here. Instead it must be created on the durable task service.
 //
 // If the task hub for this backend is not found, an error of type [ErrTaskHubNotFound] is returned.
-func (d *dtmb) CreateTaskHub(ctx context.Context) error {
+func (d *durableTaskService) CreateTaskHub(ctx context.Context) error {
 	_, err := d.client.TaskHubClientClient.Metadata(ctx, &dtmbprotos.MetadataRequest{})
 	if err != nil {
 		return backend.ErrTaskHubNotFound
@@ -115,12 +226,12 @@ func (d *dtmb) CreateTaskHub(ctx context.Context) error {
 // implementation to determine how the task hub data is deleted.
 //
 // If the task hub for this backend doesn't exist, an error of type [ErrTaskHubNotFound] is returned.
-func (d *dtmb) DeleteTaskHub(context.Context) error {
+func (d *durableTaskService) DeleteTaskHub(context.Context) error {
 	return errors.New("the TaskHub cannot be deleted using this SDK; please perform this operation on the service")
 }
 
 // Start starts any background processing done by this backend.
-func (d *dtmb) Start(ctx context.Context, orchestrators []string, activities []string) error {
+func (d *durableTaskService) Start(ctx context.Context, orchestrators []string, activities []string) error {
 	if !d.running.CompareAndSwap(false, true) {
 		return errors.New("backend is already running")
 	}
@@ -137,7 +248,7 @@ func (d *dtmb) Start(ctx context.Context, orchestrators []string, activities []s
 	return nil
 }
 
-func (d *dtmb) connectWorker(ctx context.Context, orchestrators []string, activities []string) error {
+func (d *durableTaskService) connectWorker(ctx context.Context, orchestrators []string, activities []string) error {
 	// Establish the ConnectWorker stream
 	worker := d.client
 	var taskHubName string = "default" // make this configurable
@@ -216,7 +327,7 @@ func (d *dtmb) connectWorker(ctx context.Context, orchestrators []string, activi
 }
 
 // Stop stops any background processing done by this backend.
-func (d *dtmb) Stop(ctx context.Context) error {
+func (d *durableTaskService) Stop(ctx context.Context) error {
 	// new messages are no longer received from the server, but existing received messages are still available to be processed from memory
 	d.workerCancelFunc()
 	return nil
@@ -224,7 +335,7 @@ func (d *dtmb) Stop(ctx context.Context) error {
 
 // CreateOrchestrationInstance creates a new orchestration instance with a history event that
 // wraps a ExecutionStarted event.
-func (d *dtmb) CreateOrchestrationInstance(ctx context.Context, event *backend.HistoryEvent, IdReusePolicy ...backend.OrchestrationIdReusePolicyOptions) error {
+func (d *durableTaskService) CreateOrchestrationInstance(ctx context.Context, event *backend.HistoryEvent, IdReusePolicy ...backend.OrchestrationIdReusePolicyOptions) error {
 	executionStartedEvent := event.GetExecutionStarted()
 	if executionStartedEvent == nil {
 		return fmt.Errorf("expected an ExecutionStarted event, but got %v", event.GetEventType())
@@ -247,7 +358,7 @@ func (d *dtmb) CreateOrchestrationInstance(ctx context.Context, event *backend.H
 }
 
 // AddNewEvent adds a new orchestration event to the specified orchestration instance.
-func (d *dtmb) AddNewOrchestrationEvent(ctx context.Context, id api.InstanceID, event *backend.HistoryEvent) error {
+func (d *durableTaskService) AddNewOrchestrationEvent(ctx context.Context, id api.InstanceID, event *backend.HistoryEvent) error {
 	var err error
 	switch typedEvent := event.GetEventType().(type) {
 	case *protos.HistoryEvent_EventRaised:
@@ -276,7 +387,7 @@ func (d *dtmb) AddNewOrchestrationEvent(ctx context.Context, id api.InstanceID, 
 	return err
 }
 
-func (d *dtmb) getOrchestrationHistory(ctx context.Context, orchestrationID string) ([]*dtmbprotos.Event, error) {
+func (d *durableTaskService) getOrchestrationHistory(ctx context.Context, orchestrationID string) ([]*dtmbprotos.Event, error) {
 	// look up cached history events and request the rest from the server
 	cachedEvents := d.orchestrationHistoryCache.GetCachedHistoryEventsForOrchestrationID(orchestrationID)
 
@@ -324,7 +435,7 @@ func (d *dtmb) getOrchestrationHistory(ctx context.Context, orchestrationID stri
 
 // GetOrchestrationWorkItem gets a pending work item from the task hub or returns [ErrNoWorkItems]
 // if there are no pending work items.
-func (d *dtmb) GetOrchestrationWorkItem(ctx context.Context) (*backend.OrchestrationWorkItem, error) {
+func (d *durableTaskService) GetOrchestrationWorkItem(ctx context.Context) (*backend.OrchestrationWorkItem, error) {
 	var ret *backend.OrchestrationWorkItem = nil
 	item := d.orchestrationQueue.Dequeue()
 	if item == nil || len(item.GetNewEvents()) == 0 {
@@ -364,7 +475,7 @@ func (d *dtmb) GetOrchestrationWorkItem(ctx context.Context) (*backend.Orchestra
 }
 
 // GetOrchestrationRuntimeState gets the runtime state of an orchestration instance.
-func (d *dtmb) GetOrchestrationRuntimeState(ctx context.Context, workitem *backend.OrchestrationWorkItem) (*backend.OrchestrationRuntimeState, error) {
+func (d *durableTaskService) GetOrchestrationRuntimeState(ctx context.Context, workitem *backend.OrchestrationWorkItem) (*backend.OrchestrationRuntimeState, error) {
 	events, err := d.getOrchestrationHistory(ctx, string(workitem.InstanceID))
 	if err != nil {
 		return nil, err
@@ -381,7 +492,7 @@ func (d *dtmb) GetOrchestrationRuntimeState(ctx context.Context, workitem *backe
 // GetOrchestrationMetadata gets the metadata associated with the given orchestration instance ID.
 //
 // Returns [api.ErrInstanceNotFound] if the orchestration instance doesn't exist.
-func (d *dtmb) GetOrchestrationMetadata(ctx context.Context, id api.InstanceID) (*api.OrchestrationMetadata, error) {
+func (d *durableTaskService) GetOrchestrationMetadata(ctx context.Context, id api.InstanceID) (*api.OrchestrationMetadata, error) {
 	resp, err := d.client.GetOrchestration(ctx, &dtmbprotos.GetOrchestrationRequest{
 		OrchestrationId: string(id),
 		NoPayloads:      false,
@@ -398,7 +509,7 @@ func (d *dtmb) GetOrchestrationMetadata(ctx context.Context, id api.InstanceID) 
 	ret := &api.OrchestrationMetadata{
 		InstanceID:             id,
 		Name:                   resp.Name,
-		RuntimeStatus:          utils.ConvertOrchestrationStatusToDTMB(resp.GetOrchestrationStatus()),
+		RuntimeStatus:          utils.ConvertOrchestrationStatusToDurableTaskServiceBackend(resp.GetOrchestrationStatus()),
 		CreatedAt:              resp.GetCreatedAt().AsTime(),
 		LastUpdatedAt:          resp.GetLastUpdatedAt().AsTime(),
 		SerializedInput:        string(resp.GetInput()),
@@ -497,7 +608,7 @@ func extractActionsFromOrchestrationState(state *backend.OrchestrationRuntimeSta
 			action = &dtmbprotos.OrchestratorAction{
 				OrchestratorActionType: &dtmbprotos.OrchestratorAction_CompleteOrchestration{
 					CompleteOrchestration: &dtmbprotos.CompleteOrchestrationOrchestratorAction{
-						OrchestrationStatus: utils.ConvertOrchestrationStatusFromDTMB(typedEvent.ExecutionCompleted.GetOrchestrationStatus()),
+						OrchestrationStatus: utils.ConvertOrchestrationStatusFromDurableTaskServiceBackend(typedEvent.ExecutionCompleted.GetOrchestrationStatus()),
 						FailureDetails:      failureDetails,
 						Result:              result,
 					},
@@ -536,7 +647,7 @@ func extractActionsFromOrchestrationState(state *backend.OrchestrationRuntimeSta
 }
 
 // CompleteOrchestrationWorkItem completes a work item by saving the updated runtime state to durable storage.
-func (d *dtmb) CompleteOrchestrationWorkItem(_ context.Context, item *backend.OrchestrationWorkItem) error {
+func (d *durableTaskService) CompleteOrchestrationWorkItem(_ context.Context, item *backend.OrchestrationWorkItem) error {
 	completionToken := item.Properties["CompletionToken"].(string)
 	orchestrationName := item.Properties["OrchestrationName"].(string)
 	version := item.Properties["Version"].(string)
@@ -570,7 +681,7 @@ func (d *dtmb) CompleteOrchestrationWorkItem(_ context.Context, item *backend.Or
 // This is called if an internal failure happens in the processing of an orchestration work item. It is
 // not called if the orchestration work item is processed successfully (note that an orchestration that
 // completes with a failure is still considered a successfully processed work item).
-func (d *dtmb) AbandonOrchestrationWorkItem(_ context.Context, item *backend.OrchestrationWorkItem) error {
+func (d *durableTaskService) AbandonOrchestrationWorkItem(_ context.Context, item *backend.OrchestrationWorkItem) error {
 	completionToken := item.Properties["CompletionToken"].(string)
 	orchestrationName := item.Properties["OrchestrationName"].(string)
 	version := item.Properties["Version"].(string)
@@ -590,7 +701,7 @@ func (d *dtmb) AbandonOrchestrationWorkItem(_ context.Context, item *backend.Orc
 
 // GetActivityWorkItem gets a pending activity work item from the task hub or returns [ErrNoWorkItems]
 // if there are no pending activity work items.
-func (d *dtmb) GetActivityWorkItem(context.Context) (*backend.ActivityWorkItem, error) {
+func (d *durableTaskService) GetActivityWorkItem(context.Context) (*backend.ActivityWorkItem, error) {
 	var ret *backend.ActivityWorkItem = nil
 	item := d.activityQueue.Dequeue()
 	if item == nil {
@@ -622,7 +733,7 @@ func (d *dtmb) GetActivityWorkItem(context.Context) (*backend.ActivityWorkItem, 
 }
 
 // CompleteActivityWorkItem sends a message to the parent orchestration indicating activity completion.
-func (d *dtmb) CompleteActivityWorkItem(_ context.Context, item *backend.ActivityWorkItem) error {
+func (d *durableTaskService) CompleteActivityWorkItem(_ context.Context, item *backend.ActivityWorkItem) error {
 	var result []byte = nil
 
 	if item.Result.GetTaskCompleted() != nil {
@@ -653,7 +764,7 @@ func (d *dtmb) CompleteActivityWorkItem(_ context.Context, item *backend.Activit
 // AbandonActivityWorkItem returns the work-item back to the queue without committing any other chances.
 //
 // This is called when an internal failure occurs during activity work-item processing.
-func (d *dtmb) AbandonActivityWorkItem(_ context.Context, item *backend.ActivityWorkItem) error {
+func (d *durableTaskService) AbandonActivityWorkItem(_ context.Context, item *backend.ActivityWorkItem) error {
 	completionToken := item.Properties["CompletionToken"].(string)
 	activityName := item.Properties["ActivityName"].(string)
 
@@ -673,7 +784,7 @@ func (d *dtmb) AbandonActivityWorkItem(_ context.Context, item *backend.Activity
 //
 // [api.ErrInstanceNotFound] is returned if the specified orchestration instance doesn't exist.
 // [api.ErrNotCompleted] is returned if the specified orchestration instance is still running.
-func (d *dtmb) PurgeOrchestrationState(ctx context.Context, id api.InstanceID) error {
+func (d *durableTaskService) PurgeOrchestrationState(ctx context.Context, id api.InstanceID) error {
 	_, err := d.client.PurgeOrchestration(ctx, &dtmbprotos.PurgeOrchestrationRequest{
 		Request: &dtmbprotos.PurgeOrchestrationRequest_OrchestrationId{
 			OrchestrationId: string(id),
