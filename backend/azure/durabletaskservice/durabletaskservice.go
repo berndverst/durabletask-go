@@ -56,6 +56,7 @@ type DurableTaskServiceBackendOptions struct {
 	TenantID        string
 	ClientID        string
 	AzureCredential azcore.TokenCredential
+	DisableAuth     bool
 }
 
 type azureGrpcCredentials struct {
@@ -160,6 +161,7 @@ func NewDurableTaskServiceBackendOptions(endpoint string, taskHubName string, re
 		AzureCredential: credential,
 		TenantID:        "",
 		ClientID:        "",
+		DisableAuth:     false,
 	}
 }
 
@@ -186,15 +188,22 @@ func NewDurableTaskServiceBackend(opts *DurableTaskServiceBackendOptions, logger
 	be.orchestrationTaskIDManager = utils.NewOrchestrationTaskIDManager()
 
 	ctx := context.Background()
-	creds, err := newAzureGrpcCredentials(ctx, be.options.AzureCredential, "", "", logger, true)
-	if err != nil {
-		logger.Error("failed to get azure credentials: ", err)
-		// DURING DEVELOPMENT: Proceed anyway
-		// TODO: return error
-		// return nil, fmt.Errorf("failed to get azure credentials: %v", err)
+
+	var grpcDialOptions []grpc.DialOption = []grpc.DialOption{
+		grpc.WithBlock(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	}
+	if !be.options.DisableAuth {
+		creds, err := newAzureGrpcCredentials(ctx, be.options.AzureCredential, "", "", logger, true)
+		if err != nil {
+			logger.Error("failed to get azure credentials: ", err)
+			return nil, fmt.Errorf("failed to get azure credentials: %v", err)
+		}
+		grpcDialOptions = append(grpcDialOptions, grpc.WithPerRPCCredentials(creds))
+	}
+
 	connCtx, connCancel := context.WithTimeout(ctx, 15*time.Second) // TODO: make this a configurable timeout
-	conn, err := grpc.DialContext(connCtx, be.endpoint, grpc.WithBlock(), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithPerRPCCredentials(creds))
+	conn, err := grpc.DialContext(connCtx, be.endpoint, grpcDialOptions...)
 	connCancel()
 
 	if err != nil {
