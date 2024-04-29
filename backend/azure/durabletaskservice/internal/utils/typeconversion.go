@@ -120,6 +120,10 @@ func convertContinueAsNewEvent(typedEvent *dtmbprotos.Event_ContinueAsNew) *prot
 }
 
 func convertTimerCreatedEvent(typedEvent *dtmbprotos.Event_TimerCreated) *protos.HistoryEvent_TimerCreated {
+	if typedEvent.TimerCreated.GetExecutionTime() == nil {
+		// DEBUG
+		fmt.Printf("!!!!!!!!!!!!! TimerCreatedEvent with NIL execution time !!!!!!!!!: %v\n", typedEvent.TimerCreated)
+	}
 	return &protos.HistoryEvent_TimerCreated{
 		TimerCreated: &protos.TimerCreatedEvent{
 			FireAt: typedEvent.TimerCreated.GetExecutionTime(),
