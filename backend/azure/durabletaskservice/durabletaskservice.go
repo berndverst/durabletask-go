@@ -545,7 +545,7 @@ func extractActionsFromOrchestrationState(state *backend.OrchestrationRuntimeSta
 	actions := make([]*dtmbprotos.OrchestratorAction, 0)
 	pendingMessages := state.PendingMessages()
 	pendingTasks := state.PendingTasks()
-	//pendingTimers := state.PendingTimers()
+	pendingTimers := state.PendingTimers()
 	newEvents := state.NewEvents()
 
 	for _, task := range pendingTasks {
@@ -561,24 +561,23 @@ func extractActionsFromOrchestrationState(state *backend.OrchestrationRuntimeSta
 		actions = append(actions, action)
 	}
 
-	// Durable Task Service currently does not have a timer implementation
-	//for _, timer := range pendingTimers {
-	//	if timer.GetTimerFired() == nil {
-	//		fmt.Printf("Unexpected timer event type: %v", timer)
-	//	}
-	//	action := &dtmbprotos.OrchestratorAction{
-	//		OrchestratorActionType: &dtmbprotos.OrchestratorAction_CreateTimer{
-	//			CreateTimer: &dtmbprotos.CreateTimerOrchestratorAction{
-	//				StartAt: &dtmbprotos.Delay{
-	//					Delayed: &dtmbprotos.Delay_Time{
-	//						Time: timer.GetTimerFired().GetFireAt(),
-	//					},
-	//				},
-	//			},
-	//		},
-	//	}
-	//	actions = append(actions, action)
-	//}
+	for _, timer := range pendingTimers {
+		if timer.GetTimerFired().GetFireAt() == nil {
+			continue
+		}
+		action := &dtmbprotos.OrchestratorAction{
+			OrchestratorActionType: &dtmbprotos.OrchestratorAction_CreateTimer{
+				CreateTimer: &dtmbprotos.CreateTimerOrchestratorAction{
+					StartAt: &dtmbprotos.Delay{
+						Delayed: &dtmbprotos.Delay_Time{
+							Time: timer.GetTimerFired().GetFireAt(),
+						},
+					},
+				},
+			},
+		}
+		actions = append(actions, action)
+	}
 
 	for _, msg := range pendingMessages {
 		if createdEvent := msg.HistoryEvent.GetSubOrchestrationInstanceCreated(); createdEvent != nil {
@@ -683,7 +682,7 @@ func (d *durableTaskService) CompleteOrchestrationWorkItem(_ context.Context, it
 				Name:            orchestrationName,
 				Version:         version,
 				CompletionToken: completionToken,
-				CustomStatus:    item.State.CustomStatus.GetValue(),
+				CustomStatus:    []byte(item.State.CustomStatus.GetValue()),
 				Actions:         extractActionsFromOrchestrationState(item.State),
 			},
 		},

@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/microsoft/durabletask-go/internal/protos"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -119,14 +120,10 @@ func convertContinueAsNewEvent(typedEvent *dtmbprotos.Event_ContinueAsNew) *prot
 	}
 }
 
-func convertTimerCreatedEvent(typedEvent *dtmbprotos.Event_TimerCreated) *protos.HistoryEvent_TimerCreated {
-	if typedEvent.TimerCreated.GetExecutionTime() == nil {
-		// DEBUG
-		fmt.Printf("!!!!!!!!!!!!! TimerCreatedEvent with NIL execution time !!!!!!!!!: %v\n", typedEvent.TimerCreated)
-	}
+func convertTimerCreatedEvent(typedEvent *dtmbprotos.Event_TimerCreated, baseTime time.Time) *protos.HistoryEvent_TimerCreated {
 	return &protos.HistoryEvent_TimerCreated{
 		TimerCreated: &protos.TimerCreatedEvent{
-			FireAt: typedEvent.TimerCreated.GetExecutionTime(),
+			FireAt: typedEvent.TimerCreated.GetStartAt().ToTimeStamp(baseTime),
 		},
 	}
 }
@@ -297,7 +294,7 @@ func ConvertEvent(orchestrationID string, taskIDManager *OrchestrationTaskCounte
 		return &protos.HistoryEvent{
 			EventId:   taskIDManager.GetTaskNumber(orchestrationID, event.GetSequenceNumber()),
 			Timestamp: event.GetTimestamp(),
-			EventType: convertTimerCreatedEvent(typedEvent),
+			EventType: convertTimerCreatedEvent(typedEvent, event.Timestamp.AsTime()),
 		}, nil
 	case *dtmbprotos.Event_TimerExecuted:
 		return &protos.HistoryEvent{
