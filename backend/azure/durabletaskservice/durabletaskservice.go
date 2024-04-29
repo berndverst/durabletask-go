@@ -57,6 +57,8 @@ type DurableTaskServiceBackendOptions struct {
 	ClientID        string
 	AzureCredential azcore.TokenCredential
 	DisableAuth     bool
+	Orchestrators   []string
+	Activities      []string
 }
 
 type azureGrpcCredentials struct {
@@ -242,12 +244,21 @@ func (d *durableTaskService) DeleteTaskHub(context.Context) error {
 // Start starts any background processing done by this backend.
 func (d *durableTaskService) Start(ctx context.Context, orchestrators []string, activities []string) error {
 	if !d.running.CompareAndSwap(false, true) {
-		return errors.New("backend is already running")
+		// return errors.New("backend is already running")
+		return nil
 	}
 	// TODO: is the context provided a background context?
 
 	var ctxWithCancel context.Context
 	ctxWithCancel, d.workerCancelFunc = context.WithCancel(ctx)
+
+	if len(orchestrators) == 0 {
+		orchestrators = d.options.Orchestrators
+	}
+
+	if len(activities) == 0 {
+		activities = d.options.Activities
+	}
 
 	err := d.connectWorker(ctxWithCancel, orchestrators, activities)
 	if err != nil {
@@ -551,6 +562,12 @@ func extractActionsFromOrchestrationState(state *backend.OrchestrationRuntimeSta
 	}
 
 	for _, timer := range pendingTimers {
+		if timer.GetTimerCreated() == nil {
+			continue
+		}
+		if timer.GetTimerCreated().GetFireAt() == nil {
+			continue
+		}
 		action := &dtmbprotos.OrchestratorAction{
 			OrchestratorActionType: &dtmbprotos.OrchestratorAction_CreateTimer{
 				CreateTimer: &dtmbprotos.CreateTimerOrchestratorAction{
