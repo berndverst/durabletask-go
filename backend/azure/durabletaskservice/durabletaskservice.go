@@ -458,7 +458,7 @@ func (d *durableTaskService) getOrchestrationHistory(ctx context.Context, orches
 // GetOrchestrationWorkItem gets a pending work item from the task hub or returns [ErrNoWorkItems]
 // if there are no pending work items.
 func (d *durableTaskService) GetOrchestrationWorkItem(ctx context.Context) (*backend.OrchestrationWorkItem, error) {
-	var ret *backend.OrchestrationWorkItem = nil
+	var ret *backend.OrchestrationWorkItem
 	item := d.orchestrationQueue.Dequeue()
 	if item == nil || len(item.GetNewEvents()) == 0 {
 		return nil, backend.ErrNoWorkItems
@@ -727,7 +727,7 @@ func (d *durableTaskService) AbandonOrchestrationWorkItem(_ context.Context, ite
 // GetActivityWorkItem gets a pending activity work item from the task hub or returns [ErrNoWorkItems]
 // if there are no pending activity work items.
 func (d *durableTaskService) GetActivityWorkItem(context.Context) (*backend.ActivityWorkItem, error) {
-	var ret *backend.ActivityWorkItem = nil
+	var ret *backend.ActivityWorkItem
 	item := d.activityQueue.Dequeue()
 	if item == nil {
 		return nil, backend.ErrNoWorkItems
