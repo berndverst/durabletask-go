@@ -58,7 +58,7 @@ func Init(ctx context.Context, r *task.TaskRegistry) (backend.TaskHubClient, tas
 	executor := task.NewTaskExecutor(r)
 
 	// Instantiate the Azure credential for the backend
-	cred, err := azidentity.NewDefaultAzureCredential(nil)
+	cred, err := azidentity.NewAzureCLICredential(nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -66,7 +66,6 @@ func Init(ctx context.Context, r *task.TaskRegistry) (backend.TaskHubClient, tas
 	options := &durabletaskservice.DurableTaskServiceBackendOptions{
 		Endpoint:        "localhost:5147",
 		AzureCredential: cred,
-		DisableAuth:     true,
 	}
 	be, err := durabletaskservice.NewDurableTaskServiceBackend(options, logger)
 	if err != nil {
