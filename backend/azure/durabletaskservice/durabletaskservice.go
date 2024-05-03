@@ -52,7 +52,7 @@ type durableTaskService struct {
 type DurableTaskServiceBackendOptions struct {
 	Endpoint        string
 	TaskHubHubName  string
-	ResourceScope   string
+	ResourceScopes  []string
 	TenantID        string
 	ClientID        string
 	AzureCredential azcore.TokenCredential
@@ -69,13 +69,15 @@ type azureGrpcCredentials struct {
 	disableTokenRefresh bool
 }
 
-func newAzureGrpcCredentials(ctx context.Context, cred azcore.TokenCredential, scope string, tenantId string, logger backend.Logger, disableTokenRefresh bool) (azureGrpcCredentials, error) {
-	tokenOptions := policy.TokenRequestOptions{}
-	if scope != "" {
-		tokenOptions.Scopes = []string{scope}
+func newAzureGrpcCredentials(ctx context.Context, cred azcore.TokenCredential, scopes []string, tenantId string, logger backend.Logger, disableTokenRefresh bool) (azureGrpcCredentials, error) {
+	tokenOptions := policy.TokenRequestOptions{
+		Claims:    "",
+		EnableCAE: false,
+		Scopes:    []string{"api://microsoft.durabletask.private/.default"},
+		TenantID:  tenantId,
 	}
-	if tenantId != "" {
-		tokenOptions.TenantID = tenantId
+	if len(scopes) > 0 {
+		tokenOptions.Scopes = scopes
 	}
 
 	credential := azureGrpcCredentials{
@@ -149,7 +151,7 @@ func (c azureGrpcCredentials) RequireTransportSecurity() bool {
 	return false
 }
 
-func NewDurableTaskServiceBackendOptions(endpoint string, taskHubName string, resourceScope string, credential azcore.TokenCredential, tenantID string, clientID string) *DurableTaskServiceBackendOptions {
+func NewDurableTaskServiceBackendOptions(endpoint string, taskHubName string, credential azcore.TokenCredential) *DurableTaskServiceBackendOptions {
 	if endpoint == "" {
 		endpoint = defaultEndpoint
 	}
@@ -159,7 +161,7 @@ func NewDurableTaskServiceBackendOptions(endpoint string, taskHubName string, re
 	return &DurableTaskServiceBackendOptions{
 		Endpoint:        endpoint,
 		TaskHubHubName:  taskHubName,
-		ResourceScope:   resourceScope,
+		ResourceScopes:  []string{},
 		AzureCredential: credential,
 		TenantID:        "",
 		ClientID:        "",
@@ -177,7 +179,7 @@ func NewDurableTaskServiceBackend(opts *DurableTaskServiceBackendOptions, logger
 		if err != nil {
 			return nil, fmt.Errorf("failed to get default azure credentials: %v", err)
 		}
-		opts = NewDurableTaskServiceBackendOptions(defaultEndpoint, "default", "", credential, "", "")
+		opts = NewDurableTaskServiceBackendOptions(defaultEndpoint, "default", credential)
 	}
 	be.options = opts
 	be.endpoint = opts.Endpoint
@@ -196,7 +198,7 @@ func NewDurableTaskServiceBackend(opts *DurableTaskServiceBackendOptions, logger
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	}
 	if !be.options.DisableAuth {
-		creds, err := newAzureGrpcCredentials(ctx, be.options.AzureCredential, "", "", logger, true)
+		creds, err := newAzureGrpcCredentials(ctx, be.options.AzureCredential, be.options.ResourceScopes, be.options.TenantID, logger, false)
 		if err != nil {
 			logger.Error("failed to get azure credentials: ", err)
 			return nil, fmt.Errorf("failed to get azure credentials: %v", err)
