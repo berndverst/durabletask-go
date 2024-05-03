@@ -112,14 +112,14 @@ message SubOrchestrationInstanceCreatedEvent {
 
 // A sub-orchestration has completed
 message SubOrchestrationInstanceCompletedEvent {
-    // Sequence number of the event that scheduled this activity
+    // Sequence number of the event that scheduled this work item
     int64 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
     bytes result = 2;
 }
 
 // A sub-orchestration has failed
 message SubOrchestrationInstanceFailedEvent {
-    // Sequence number of the event that scheduled this activity
+    // Sequence number of the event that scheduled this work item
     int64 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
     bytes result = 2;
     FailureDetails failure_details = 3 [json_name = "failureDetails"];
@@ -128,12 +128,12 @@ message SubOrchestrationInstanceFailedEvent {
 // The orchestrator scheduled a timer.
 message TimerCreatedEvent {
     // Scheduled execution time for the timer
-    google.protobuf.Timestamp execution_time = 5 [json_name = "executionTime"];
+    Delay start_at = 1 [json_name = "startAt"];
 }
 
 // A previously-scheduled timer has executed.
 message TimerExecutedEvent {
-    // Sequence number of the event that scheduled this activity
+    // Sequence number of the event that scheduled this work item
     int64 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
 }
 

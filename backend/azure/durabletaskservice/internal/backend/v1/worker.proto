@@ -112,7 +112,7 @@ message CompleteOrchestrationMessage {
     // Completion token sent in the ExecuteOrchestrationMessage.
     string completion_token = 5 [json_name = "completionToken"];
     // Custom status to update (optional).
-    string custom_status = 10 [json_name = "customStatus"];
+    bytes custom_status = 10 [json_name = "customStatus"];
     // If true, resets the custom status, removing the existing one (optional).
     bool reset_custom_status = 11 [json_name = "resetCustomStatus"];
     // Actions to schedule.
@@ -147,6 +147,9 @@ message AbandonOrchestrationMessage {
     string version = 4;
     // Completion token sent in the ExecuteOrchestrationMessage
     string completion_token = 5 [json_name = "completionToken"];
+    // Optional delay for retrying.
+    // If not specified, the operation will be retried immediately.
+    Delay retry_delay = 10 [json_name = "retryDelay"];
 }
 
 // AbandonActivityMessage is one of the messages that can be sent by the worker over ConnectWorker.
@@ -160,6 +163,9 @@ message AbandonActivityMessage {
     //string version = 4;
     // Completion token sent in the ExecuteActivityMessage
     string completion_token = 5 [json_name = "completionToken"];
+    // Optional delay for retrying.
+    // If not specified, the operation will be retried immediately.
+    Delay retry_delay = 10 [json_name = "retryDelay"];
 }
 
 // BackOffMessage is one of the messages that can be sent by the worker over ConnectWorker.

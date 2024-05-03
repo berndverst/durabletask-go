@@ -13,6 +13,7 @@ message InboxAction {
         ActivityCompletedInboxAction activity_completed = 101 [json_name = "activityCompleted"];
         ActivityFailedInboxAction activity_failed = 102 [json_name = "activityFailed"];
         RaiseEventInboxAction raise_event = 103 [json_name = "raiseEvent"];
+        ExecuteTimerInboxAction execute_timer = 104 [json_name = "executeTimer"];
     }
 }
 
@@ -50,4 +51,10 @@ message ActivityFailedInboxAction {
 message RaiseEventInboxAction {
     // Event name
     string name = 1;
+}
+
+// A timer is scheduled to be executed.
+message ExecuteTimerInboxAction {
+    // Sequence number of the event that scheduled this work item
+    int64 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
 }

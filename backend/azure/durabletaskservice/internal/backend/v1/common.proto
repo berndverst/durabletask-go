@@ -69,9 +69,6 @@ message FailureDetails {
     string stack_trace = 3 [json_name = "stackTrace"];
     FailureDetails inner_failure = 4 [json_name = "innerFailure"];
     bool retriable = 5 [json_name = "retriable"];
-    // Optional delay for retriable operations.
-    // If not specified, the operation will be retried immediately.
-    Delay retry_delay = 10 [json_name = "retryDelay"];
 }
 
 message ParentInstanceInfo {
