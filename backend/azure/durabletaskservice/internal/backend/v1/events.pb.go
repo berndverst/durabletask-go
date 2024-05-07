@@ -808,14 +808,15 @@ type SubOrchestrationInstanceCreatedEvent struct {
 
 	// ID of the sub-orchestration
 	OrchestrationId string `protobuf:"bytes,1,opt,name=orchestration_id,json=orchestrationId,proto3" json:"orchestration_id,omitempty"`
-	// Unique ID of the sub-orchestration execution
+	// Unique ID of the sub-orchestration execution started
 	ExecutionId string `protobuf:"bytes,2,opt,name=execution_id,json=executionId,proto3" json:"execution_id,omitempty"`
-	// Name of the orchestration to start
+	// Name of the sub-orchestration started
 	Name string `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
-	// Version of the orchestration to start
+	// Version of the sub-orchestration started (could be empty)
 	Version string `protobuf:"bytes,4,opt,name=version,proto3" json:"version,omitempty"`
-	// Input data
-	Input              []byte        `protobuf:"bytes,10,opt,name=input,proto3" json:"input,omitempty"`
+	// Input data (optional)
+	Input []byte `protobuf:"bytes,10,opt,name=input,proto3" json:"input,omitempty"`
+	// Trace context (optional)
 	ParentTraceContext *TraceContext `protobuf:"bytes,30,opt,name=parent_trace_context,json=parentTraceContext,proto3" json:"parent_trace_context,omitempty"`
 }
 
@@ -899,7 +900,7 @@ type SubOrchestrationInstanceCompletedEvent struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// Sequence number of the event that scheduled this work item
+	// Sequence number of the event that scheduled the sub-orchestration
 	RelatedSequenceNumber int64  `protobuf:"varint,1,opt,name=related_sequence_number,json=relatedSequenceNumber,proto3" json:"related_sequence_number,omitempty"`
 	Result                []byte `protobuf:"bytes,2,opt,name=result,proto3" json:"result,omitempty"`
 }
@@ -956,7 +957,7 @@ type SubOrchestrationInstanceFailedEvent struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// Sequence number of the event that scheduled this work item
+	// Sequence number of the event that scheduled the sub-orchestration
 	RelatedSequenceNumber int64           `protobuf:"varint,1,opt,name=related_sequence_number,json=relatedSequenceNumber,proto3" json:"related_sequence_number,omitempty"`
 	Result                []byte          `protobuf:"bytes,2,opt,name=result,proto3" json:"result,omitempty"`
 	FailureDetails        *FailureDetails `protobuf:"bytes,3,opt,name=failure_details,json=failureDetails,proto3" json:"failure_details,omitempty"`

@@ -14,6 +14,8 @@ message InboxAction {
         ActivityFailedInboxAction activity_failed = 102 [json_name = "activityFailed"];
         RaiseEventInboxAction raise_event = 103 [json_name = "raiseEvent"];
         ExecuteTimerInboxAction execute_timer = 104 [json_name = "executeTimer"];
+        SubOrchestrationInstanceCompletedInboxAction sub_orchestration_instance_completed = 105 [json_name = "subOrchestrationInstanceCompleted"];
+        SubOrchestrationInstanceFailedInboxAction sub_orchestration_instance_failed = 106 [json_name = "subOrchestrationInstanceFailed"];
     }
 }
 
@@ -57,4 +59,19 @@ message RaiseEventInboxAction {
 message ExecuteTimerInboxAction {
     // Sequence number of the event that scheduled this work item
     int64 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
+}
+
+// A sub-orchestration has completed
+message SubOrchestrationInstanceCompletedInboxAction {
+    // Sequence number of the event that scheduled the sub-orchestration
+    int64 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
+    bytes result = 2;
+}
+
+// A sub-orchestration has failed
+message SubOrchestrationInstanceFailedInboxAction {
+    // Sequence number of the event that scheduled the sub-orchestration
+    int64 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
+    bytes result = 2;
+    FailureDetails failure_details = 3 [json_name = "failureDetails"];
 }

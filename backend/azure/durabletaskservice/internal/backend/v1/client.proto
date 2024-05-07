@@ -46,6 +46,8 @@ message CreateOrchestrationRequest {
 message CreateOrchestrationResponse {
     // ID of the orchestration
     string orchestration_id = 1 [json_name = "orchestrationId"];
+    // Unique ID of the orchestration execution
+    string execution_id = 2 [json_name = "executionId"];
 }
 
 message OrchestrationIDReusePolicy {

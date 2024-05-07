@@ -99,27 +99,28 @@ message ActivityFailedEvent {
 message SubOrchestrationInstanceCreatedEvent {
     // ID of the sub-orchestration
     string orchestration_id = 1 [json_name = "orchestrationId"];
-    // Unique ID of the sub-orchestration execution
+    // Unique ID of the sub-orchestration execution started
     string execution_id = 2 [json_name = "executionId"];
-    // Name of the orchestration to start
+    // Name of the sub-orchestration started
     string name = 3;
-    // Version of the orchestration to start
+    // Version of the sub-orchestration started (could be empty)
     string version = 4;
-    // Input data
+    // Input data (optional)
     bytes input = 10;
+    // Trace context (optional)
     TraceContext parent_trace_context = 30 [json_name = "parentTraceContext"];
 }
 
 // A sub-orchestration has completed
 message SubOrchestrationInstanceCompletedEvent {
-    // Sequence number of the event that scheduled this work item
+    // Sequence number of the event that scheduled the sub-orchestration
     int64 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
     bytes result = 2;
 }
 
 // A sub-orchestration has failed
 message SubOrchestrationInstanceFailedEvent {
-    // Sequence number of the event that scheduled this work item
+    // Sequence number of the event that scheduled the sub-orchestration
     int64 related_sequence_number = 1 [json_name = "relatedSequenceNumber"];
     bytes result = 2;
     FailureDetails failure_details = 3 [json_name = "failureDetails"];
