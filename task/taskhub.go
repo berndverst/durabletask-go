@@ -50,7 +50,6 @@ func (w *taskHubWorker) Start(ctx context.Context) error {
 	if err := w.backend.Start(ctx, orchestrators, activities); err != nil {
 		return err
 	}
-	w.logger.Infof("worker started with backend %v", w.backend)
 
 	w.orchestrationWorker.Start(ctx)
 	w.activityWorker.Start(ctx)

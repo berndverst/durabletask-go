@@ -4,20 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"sync/atomic"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/microsoft/durabletask-go/api"
 	"github.com/microsoft/durabletask-go/backend"
 	"github.com/microsoft/durabletask-go/internal/protos"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
@@ -59,96 +55,7 @@ type DurableTaskServiceBackendOptions struct {
 	DisableAuth     bool
 	Orchestrators   []string
 	Activities      []string
-}
-
-type azureGrpcCredentials struct {
-	token               *azcore.AccessToken
-	TokenOptions        policy.TokenRequestOptions
-	logger              backend.Logger
-	azureCredential     azcore.TokenCredential
-	disableTokenRefresh bool
-}
-
-func newAzureGrpcCredentials(ctx context.Context, cred azcore.TokenCredential, scopes []string, tenantId string, logger backend.Logger, disableTokenRefresh bool) (azureGrpcCredentials, error) {
-	tokenOptions := policy.TokenRequestOptions{
-		Claims:    "",
-		EnableCAE: false,
-		Scopes:    []string{"api://microsoft.durabletask.private/.default"},
-		TenantID:  tenantId,
-	}
-	if len(scopes) > 0 {
-		tokenOptions.Scopes = scopes
-	}
-
-	credential := azureGrpcCredentials{
-		TokenOptions:        tokenOptions,
-		disableTokenRefresh: disableTokenRefresh,
-		logger:              logger,
-		token:               nil,
-		azureCredential:     cred,
-	}
-
-	// grab a token and start the token refresh goroutine
-	tokenErr := credential.UpdateToken(ctx)
-	if tokenErr != nil {
-		return azureGrpcCredentials{logger: logger}, fmt.Errorf("failed to get access token: %v", tokenErr)
-	}
-
-	if !disableTokenRefresh {
-		go func() {
-			for {
-				select {
-				case <-time.After(time.Until(credential.GetTokenRefreshTime())):
-					log.Println("Refreshing access token")
-					tokenErr := credential.UpdateToken(ctx)
-					if tokenErr != nil {
-						logger.Errorf("failed to update access token: %v", tokenErr)
-					}
-				case <-ctx.Done():
-					return
-				}
-			}
-		}()
-	}
-
-	return credential, nil
-}
-
-func (c azureGrpcCredentials) GetTokenRefreshTime() time.Time {
-	if c.token == nil {
-		return time.Now()
-	}
-	// we refresh the token 2 minutes before it expires
-	return c.token.ExpiresOn.Add(-2 * time.Minute)
-}
-
-func (c azureGrpcCredentials) GetToken() string {
-	if c.token == nil {
-		c.logger.Debug("Token is nil. Returning empty string.")
-		return ""
-	}
-	c.logger.Debug("Token: %s", c.token.Token)
-	return c.token.Token
-}
-
-func (c *azureGrpcCredentials) UpdateToken(ctx context.Context) error {
-	c.logger.Debug("Updating token")
-	token, tokenErr := c.azureCredential.GetToken(ctx, c.TokenOptions)
-	if tokenErr == nil {
-		c.token = &token
-	}
-
-	return tokenErr
-}
-
-func (c azureGrpcCredentials) GetRequestMetadata(ctx context.Context, uri ...string) (map[string]string, error) {
-	return map[string]string{
-		"Authorization": "Bearer " + c.GetToken(),
-	}, nil
-}
-
-func (c azureGrpcCredentials) RequireTransportSecurity() bool {
-	return false
+	Insecure        bool
 }
 
 func NewDurableTaskServiceBackendOptions(endpoint string, taskHubName string, credential azcore.TokenCredential) *DurableTaskServiceBackendOptions {
@@ -166,10 +73,11 @@ func NewDurableTaskServiceBackendOptions(endpoint string, taskHubName string, cr
 		TenantID:        "",
 		ClientID:        "",
 		DisableAuth:     false,
+		Insecure:        false,
 	}
 }
 
-func NewDurableTaskServiceBackend(opts *DurableTaskServiceBackendOptions, logger backend.Logger) (backend.Backend, error) {
+func NewDurableTaskServiceBackend(ctx context.Context, opts *DurableTaskServiceBackendOptions, logger backend.Logger) (backend.Backend, error) {
 	be := &durableTaskService{
 		logger: logger,
 	}
@@ -184,26 +92,11 @@ func NewDurableTaskServiceBackend(opts *DurableTaskServiceBackendOptions, logger
 	be.options = opts
 	be.endpoint = opts.Endpoint
 
-	// The following queues are used to store messages received from the server
-	be.orchestrationQueue = utils.NewSyncQueue[dtmbprotos.ExecuteOrchestrationMessage]()
-	be.activityQueue = utils.NewSyncQueue[dtmbprotos.ExecuteActivityMessage]()
-
-	be.orchestrationHistoryCache = utils.NewOrchestrationHistoryCache(nil) // TODO: make capacity configurable
-	be.orchestrationTaskIDManager = utils.NewOrchestrationTaskIDManager()
-
-	ctx := context.Background()
-
-	var grpcDialOptions []grpc.DialOption = []grpc.DialOption{
-		grpc.WithBlock(),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	}
-	if !be.options.DisableAuth {
-		creds, err := newAzureGrpcCredentials(ctx, be.options.AzureCredential, be.options.ResourceScopes, be.options.TenantID, logger, false)
-		if err != nil {
-			logger.Error("failed to get azure credentials: ", err)
-			return nil, fmt.Errorf("failed to get azure credentials: %v", err)
-		}
-		grpcDialOptions = append(grpcDialOptions, grpc.WithPerRPCCredentials(creds))
+	userAgent := "durabetask-go"
+	grpcDialOptions, optionErr := utils.CreateGrpcDialOptions(
+		ctx, logger, be.options.Insecure, be.options.DisableAuth, be.options.TaskHubHubName, userAgent, &be.options.AzureCredential, be.options.ResourceScopes, be.options.TenantID)
+	if optionErr != nil {
+		return nil, optionErr
 	}
 
 	connCtx, connCancel := context.WithTimeout(ctx, 15*time.Second) // TODO: make this a configurable timeout
@@ -249,7 +142,6 @@ func (d *durableTaskService) Start(ctx context.Context, orchestrators []string, 
 		// return errors.New("backend is already running")
 		return nil
 	}
-	// TODO: is the context provided a background context?
 
 	var ctxWithCancel context.Context
 	ctxWithCancel, d.workerCancelFunc = context.WithCancel(ctx)
@@ -261,6 +153,17 @@ func (d *durableTaskService) Start(ctx context.Context, orchestrators []string, 
 	if len(activities) == 0 {
 		activities = d.options.Activities
 	}
+
+	d.logger.Debug("Starting DurableTaskServiceBackend")
+	d.logger.Debugf("===== Orchestrators: %v", orchestrators)
+	d.logger.Debugf("===== Activities: %v", activities)
+
+	// The following queues are used to store messages received from the server
+	d.orchestrationQueue = utils.NewSyncQueue[dtmbprotos.ExecuteOrchestrationMessage]()
+	d.activityQueue = utils.NewSyncQueue[dtmbprotos.ExecuteActivityMessage]()
+
+	d.orchestrationHistoryCache = utils.NewOrchestrationHistoryCache(nil) // TODO: make capacity configurable
+	d.orchestrationTaskIDManager = utils.NewOrchestrationTaskIDManager()
 
 	err := d.connectWorker(ctxWithCancel, orchestrators, activities)
 	if err != nil {
@@ -298,14 +201,14 @@ func (d *durableTaskService) connectWorker(ctx context.Context, orchestrators []
 			func() {
 				close(readyCh)
 			},
-			true,
+			false, // enable for debug
 		)
 	}()
 
 	// Wait for readiness
 	select {
 	case err := <-bgErrCh: // This includes a timeout too
-		log.Printf("[%s] Error starting test: %v", testID, err)
+		d.logger.Errorf("[%s] Error starting test: %v", testID, err)
 		return err
 	case <-readyCh:
 		// All good
@@ -313,13 +216,13 @@ func (d *durableTaskService) connectWorker(ctx context.Context, orchestrators []
 
 	// Do a ping as last warm-up
 	pingCtx, pingCancel := context.WithTimeout(ctx, 15*time.Second)
-	pingCtx = metadata.AppendToOutgoingContext(pingCtx,
-		"taskhub", taskHubName,
-	)
+	// pingCtx = metadata.AppendToOutgoingContext(pingCtx,
+	// 	"taskhub", taskHubName,
+	// )
 	_, err := worker.Ping(pingCtx, &dtmbprotos.PingRequest{})
 	pingCancel()
 	if err != nil {
-		log.Printf("[%s] Ping error: %v", testID, err)
+		d.logger.Errorf("[%s] Ping error: %v", testID, err)
 		return fmt.Errorf("ping error: %w", err)
 	}
 
@@ -336,10 +239,10 @@ func (d *durableTaskService) connectWorker(ctx context.Context, orchestrators []
 		}
 	}()
 
-	// // Wait for stop (or an error)
+	// Wait for stop (or an error)
 	// select {
 	// case err = <-bgErrCh:
-	// 	log.Printf("[%s] Error from ConnectWorker: %v", testID, err)
+	// 	d.logger.Errorf("[%s] Error from ConnectWorker: %v", testID, err)
 	// 	return fmt.Errorf("error from ConnectWorker: %w", err)
 	// case <-ctx.Done():
 	// 	// We stopped, so all good
@@ -363,16 +266,23 @@ func (d *durableTaskService) CreateOrchestrationInstance(ctx context.Context, ev
 		return fmt.Errorf("expected an ExecutionStarted event, but got %v", event.GetEventType())
 	}
 
+	var startTime *dtmbprotos.Delay
+	if executionStartedEvent.GetScheduledStartTimestamp() == nil {
+		startTime = nil
+	} else {
+		startTime = &dtmbprotos.Delay{
+			Delayed: &dtmbprotos.Delay_Time{
+				Time: executionStartedEvent.GetScheduledStartTimestamp(),
+			},
+		}
+	}
+
 	_, err := d.client.CreateOrchestration(ctx, &dtmbprotos.CreateOrchestrationRequest{
 		OrchestrationId: executionStartedEvent.GetOrchestrationInstance().GetInstanceId(),
 		Name:            executionStartedEvent.GetName(),
 		Version:         executionStartedEvent.GetVersion().GetValue(),
 		Input:           []byte(executionStartedEvent.GetInput().GetValue()),
-		StartAt: &dtmbprotos.Delay{
-			Delayed: &dtmbprotos.Delay_Time{
-				Time: executionStartedEvent.GetScheduledStartTimestamp(),
-			},
-		},
+		StartAt:         startTime,
 		// IdReusePolicy: // this is not implemented on the server
 	})
 
@@ -696,7 +606,7 @@ func (d *durableTaskService) CompleteOrchestrationWorkItem(_ context.Context, it
 		d.orchestrationTaskIDManager.PurgeOrchestration((string(item.InstanceID)))
 	}
 
-	fmt.Printf("=============== CompleteOrchestrationWorkItem: %v\n", completionMessage)
+	d.logger.Debugf("=============== CompleteOrchestrationWorkItem: %v\n", completionMessage)
 
 	return nil
 }
@@ -783,6 +693,7 @@ func (d *durableTaskService) CompleteActivityWorkItem(_ context.Context, item *b
 			},
 		},
 	}
+	d.logger.Debug("=============== CompleteActivityWorkItem \n")
 	return nil
 }
 
@@ -817,6 +728,7 @@ func (d *durableTaskService) PurgeOrchestrationState(ctx context.Context, id api
 		NonRecursive: false,
 	})
 	if err != nil {
+		d.logger.Debug("PurgeOrchestrationState error: %v", err)
 		if status.Code(err) == codes.NotFound {
 			return api.ErrInstanceNotFound
 		} else {

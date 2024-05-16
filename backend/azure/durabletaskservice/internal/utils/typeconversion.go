@@ -396,15 +396,11 @@ func ConvertEvents(orchestrationID string, taskIDManager *OrchestrationTaskCount
 	historyEvents := make([]*protos.HistoryEvent, len(events))
 
 	for i, item := range events {
-		// prettyprint the event
-		fmt.Printf("=============== Incoming Event: %v\n", item)
-
 		convertedItem, err := ConvertEvent(orchestrationID, taskIDManager, item)
 		if err != nil {
 			return nil, err
 		}
 		historyEvents[i] = convertedItem
-		fmt.Printf("================= Converted incoming Event: %v\n", convertedItem)
 	}
 	return historyEvents, nil
 }

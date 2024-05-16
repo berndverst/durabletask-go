@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/microsoft/durabletask-go/backend/azure/durabletaskservice/internal/backend/v1"
-	"google.golang.org/grpc/metadata"
 )
 
 var UserAgent = "dev/1"
@@ -30,10 +29,10 @@ func ConnectWorker(
 	defer close(serverMsgChan)
 
 	// Establish the ConnectWorker stream
-	streamCtx := metadata.AppendToOutgoingContext(ctx,
-		"taskhub", taskHub,
-	)
-	stream, err := worker.ConnectWorker(streamCtx)
+	// streamCtx := metadata.AppendToOutgoingContext(ctx,
+	// 	"taskhub", taskHub,
+	// )
+	stream, err := worker.ConnectWorker(ctx)
 	if err != nil {
 		return fmt.Errorf("error starting ConnectWorker: %w", err)
 	}
@@ -212,7 +211,8 @@ func (l ActivityFnList) ToProto() []*backend.EstablishWorkerConnectionMessage_Ac
 	res := make([]*backend.EstablishWorkerConnectionMessage_ActivityFunctionType, len(l))
 	for i := 0; i < len(l); i++ {
 		res[i] = &backend.EstablishWorkerConnectionMessage_ActivityFunctionType{
-			Name: l[i],
+			Name:            l[i],
+			ConcurrentLimit: 20, // TODO: Make this configurable
 		}
 	}
 	return res
@@ -225,8 +225,9 @@ func (l OrchestratorFnList) ToProto() []*backend.EstablishWorkerConnectionMessag
 	for i := 0; i < len(l); i++ {
 		name, version, _ := strings.Cut(l[i], "|")
 		res[i] = &backend.EstablishWorkerConnectionMessage_OrchestratorFunctionType{
-			Name:    name,
-			Version: version,
+			Name:            name,
+			Version:         version,
+			ConcurrentLimit: 20, // TODO: Make this configurable
 		}
 	}
 	return res

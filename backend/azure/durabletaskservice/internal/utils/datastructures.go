@@ -2,7 +2,6 @@ package utils
 
 import (
 	"container/list"
-	"log"
 	"sync"
 
 	dtmbprotos "github.com/microsoft/durabletask-go/backend/azure/durabletaskservice/internal/backend/v1"
@@ -195,7 +194,7 @@ func (o *OrchestrationHistoryCache) AddHistoryEventsForOrchestrationID(orchestra
 }
 
 func (o *OrchestrationHistoryCache) EvictCacheForOrchestrationID(orchestrationID string) {
-	log.Println("=== Evicting cache for orchestrationID: ", orchestrationID)
+	// log.Println("=== Evicting cache for orchestrationID: ", orchestrationID)
 	o.lock.Lock()
 	defer o.lock.Unlock()
 	if element, ok := o.cache[orchestrationID]; ok {
