@@ -67,7 +67,7 @@ func Init(ctx context.Context, r *task.TaskRegistry) (backend.TaskHubClient, tas
 		Endpoint:        "localhost:5147",
 		AzureCredential: cred,
 	}
-	be, err := durabletaskservice.NewDurableTaskServiceBackend(options, logger)
+	be, err := durabletaskservice.NewDurableTaskServiceBackend(ctx, options, logger)
 	if err != nil {
 		return nil, nil, err
 	}

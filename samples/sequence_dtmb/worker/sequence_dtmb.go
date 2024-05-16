@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 
@@ -10,6 +9,7 @@ import (
 	"github.com/microsoft/durabletask-go/backend"
 	"github.com/microsoft/durabletask-go/backend/azure/durabletaskservice"
 	"github.com/microsoft/durabletask-go/task"
+	"go.uber.org/zap"
 )
 
 func main() {
@@ -20,35 +20,24 @@ func main() {
 
 	// Init the client
 	ctx := context.Background()
-	client, worker, err := Init(ctx, r)
+	worker, err := Init(ctx, r)
 	if err != nil {
 		log.Fatalf("Failed to initialize the client: %v", err)
 	}
+	// Start the worker
+	err = worker.Start(ctx)
+	if err != nil {
+		log.Fatalf("Failed to start the worker: %v", err)
+	}
+	<-ctx.Done()
 	defer worker.Shutdown(ctx)
-
-	// Start a new orchestration
-	id, err := client.ScheduleNewOrchestration(ctx, ActivitySequenceOrchestrator)
-	if err != nil {
-		log.Fatalf("Failed to schedule new orchestration: %v", err)
-	}
-
-	// Wait for the orchestration to complete
-	metadata, err := client.WaitForOrchestrationCompletion(ctx, id)
-	if err != nil {
-		log.Fatalf("Failed to wait for orchestration to complete: %v", err)
-	}
-
-	// Print the results
-	metadataEnc, err := json.MarshalIndent(metadata, "", "  ")
-	if err != nil {
-		log.Fatalf("Failed to encode result to JSON: %v", err)
-	}
-	log.Printf("Orchestration completed: %v", string(metadataEnc))
 }
 
 // Init creates and initializes an in-memory client and worker pair with default configuration.
-func Init(ctx context.Context, r *task.TaskRegistry) (backend.TaskHubClient, task.TaskHubWorker, error) {
-	logger := backend.DefaultLogger()
+func Init(ctx context.Context, r *task.TaskRegistry) (task.TaskHubWorker, error) {
+	zaplogger, _ := zap.NewProduction()
+	defer zaplogger.Sync() // flushes buffer, if any
+	logger := zaplogger.Sugar()
 
 	// Create an executor
 	executor := task.NewTaskExecutor(r)
@@ -56,33 +45,26 @@ func Init(ctx context.Context, r *task.TaskRegistry) (backend.TaskHubClient, tas
 	// Instantiate the Azure credential for the backend
 	cred, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	// Create a new backend
 	options := &durabletaskservice.DurableTaskServiceBackendOptions{
-		Endpoint:        "localhost:5147",
+		// Endpoint: "localhost:5147",
+		Endpoint:        "bernd01.whitecoast-aac30fd6.eastus.azurecontainerapps.io:443",
 		AzureCredential: cred,
 		DisableAuth:     true,
+		// Insecure:        true,
 	}
 	be, err := durabletaskservice.NewDurableTaskServiceBackend(ctx, options, logger)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	orchestrationWorker := backend.NewOrchestrationWorker(be, executor, logger)
 	activityWorker := backend.NewActivityTaskWorker(be, executor, logger)
 	taskHubWorker := task.NewTaskHubWorker(be, orchestrationWorker, activityWorker, logger, r)
 
-	// Start the worker
-	err = taskHubWorker.Start(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// Get the client to the backend
-	taskHubClient := backend.NewTaskHubClient(be)
-
-	return taskHubClient, taskHubWorker, nil
+	return taskHubWorker, nil
 }
 
 // ActivitySequenceOrchestrator makes three activity calls in sequence and results the results
@@ -100,7 +82,15 @@ func ActivitySequenceOrchestrator(ctx *task.OrchestrationContext) (any, error) {
 	if err := ctx.CallActivity(SayHelloActivity, task.WithActivityInput("Seattle")).Await(&helloSeattle); err != nil {
 		return nil, err
 	}
-	return []string{helloTokyo, helloLondon, helloSeattle}, nil
+	var helloVancouver string
+	if err := ctx.CallActivity(SayHelloActivity, task.WithActivityInput("Vancouver")).Await(&helloVancouver); err != nil {
+		return nil, err
+	}
+	var helloShanghai string
+	if err := ctx.CallActivity(SayHelloActivity, task.WithActivityInput("Shanghai")).Await(&helloShanghai); err != nil {
+		return nil, err
+	}
+	return []string{helloTokyo, helloLondon, helloSeattle, helloVancouver, helloShanghai}, nil
 }
 
 // SayHelloActivity can be called by an orchestrator function and will return a friendly greeting.
