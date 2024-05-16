@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -59,8 +61,19 @@ type DurableTaskServiceBackendOptions struct {
 }
 
 func NewDurableTaskServiceBackendOptions(endpoint string, taskHubName string, credential azcore.TokenCredential) *DurableTaskServiceBackendOptions {
+	defaultPort := "443"
 	if endpoint == "" {
 		endpoint = defaultEndpoint
+	} else {
+		protocolParts := strings.Split("://", endpoint)
+		if len(protocolParts) == 2 {
+			endpoint = protocolParts[1]
+		}
+
+		_, _, err := net.SplitHostPort(endpoint)
+		if err != nil {
+			endpoint = fmt.Sprintf("%s:%s", endpoint, defaultPort)
+		}
 	}
 	if taskHubName == "" {
 		taskHubName = "default"
