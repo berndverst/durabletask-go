@@ -129,7 +129,7 @@ func (c azureGrpcCredentials) GetRequestMetadata(ctx context.Context, uri ...str
 }
 
 func (c azureGrpcCredentials) RequireTransportSecurity() bool {
-	return c.insecure
+	return !c.insecure
 }
 
 type taskHubCredential struct {
@@ -144,7 +144,7 @@ func (c taskHubCredential) GetRequestMetadata(ctx context.Context, uri ...string
 }
 
 func (c taskHubCredential) RequireTransportSecurity() bool {
-	return c.insecure
+	return !c.insecure
 }
 
 func newTaskHubCredential(taskhub string, insecure bool) taskHubCredential {

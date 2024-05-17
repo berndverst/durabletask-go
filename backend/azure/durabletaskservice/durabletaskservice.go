@@ -49,7 +49,7 @@ type durableTaskService struct {
 
 type DurableTaskServiceBackendOptions struct {
 	Endpoint        string
-	TaskHubHubName  string
+	TaskHubName     string
 	ResourceScopes  []string
 	TenantID        string
 	ClientID        string
@@ -80,7 +80,7 @@ func NewDurableTaskServiceBackendOptions(endpoint string, taskHubName string, cr
 	}
 	return &DurableTaskServiceBackendOptions{
 		Endpoint:        endpoint,
-		TaskHubHubName:  taskHubName,
+		TaskHubName:     taskHubName,
 		ResourceScopes:  []string{},
 		AzureCredential: credential,
 		TenantID:        "",
@@ -107,7 +107,7 @@ func NewDurableTaskServiceBackend(ctx context.Context, opts *DurableTaskServiceB
 
 	userAgent := "durabetask-go"
 	grpcDialOptions, optionErr := utils.CreateGrpcDialOptions(
-		ctx, logger, be.options.Insecure, be.options.DisableAuth, be.options.TaskHubHubName, userAgent, &be.options.AzureCredential, be.options.ResourceScopes, be.options.TenantID)
+		ctx, logger, be.options.Insecure, be.options.DisableAuth, be.options.TaskHubName, userAgent, &be.options.AzureCredential, be.options.ResourceScopes, be.options.TenantID)
 	if optionErr != nil {
 		return nil, optionErr
 	}
