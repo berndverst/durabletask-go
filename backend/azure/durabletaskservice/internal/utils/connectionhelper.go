@@ -11,10 +11,12 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
-	"github.com/microsoft/durabletask-go/backend"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+
+	"github.com/microsoft/durabletask-go/backend"
+	"github.com/microsoft/durabletask-go/internal/helpers"
 )
 
 func InterceptorLogger(l backend.Logger) logging.Logger {
@@ -178,18 +180,19 @@ func CreateGrpcDialOptions(ctx context.Context, logger backend.Logger, isInsecur
 	// End of Authentication options
 	// Attach required metadata on every request, for example the taskhub Name
 	taskHubCredential := newTaskHubCredential(taskHubName, isInsecure)
-	grpcDialOptions = append(grpcDialOptions, grpc.WithPerRPCCredentials(taskHubCredential))
-	grpcDialOptions = append(grpcDialOptions, grpc.WithUserAgent(userAgent))
+	grpcDialOptions = append(grpcDialOptions,
+		grpc.WithPerRPCCredentials(taskHubCredential),
+		grpc.WithUserAgent(userAgent),
+	)
 	// End of required metadata
 
 	// check whether environment variable GRPC_INTERCEPTOR_LOGGING is set to true
-	loggerEnv, found := os.LookupEnv("GRPC_INTERCEPTOR_LOGGING")
-	if found && (loggerEnv == "true" || loggerEnv == "1") {
-		opts := []logging.Option{
-			logging.WithLogOnEvents(logging.PayloadSent, logging.PayloadReceived),
-		}
-		grpcDialOptions = append(grpcDialOptions, grpc.WithUnaryInterceptor(logging.UnaryClientInterceptor(InterceptorLogger(logger), opts...)))
-		grpcDialOptions = append(grpcDialOptions, grpc.WithStreamInterceptor(logging.StreamClientInterceptor(InterceptorLogger(logger), opts...)))
+	if helpers.IsTruthy(os.Getenv("GRPC_INTERCEPTOR_LOGGING")) {
+		loggingOpt := logging.WithLogOnEvents(logging.PayloadSent, logging.PayloadReceived)
+		grpcDialOptions = append(grpcDialOptions,
+			grpc.WithUnaryInterceptor(logging.UnaryClientInterceptor(InterceptorLogger(logger), loggingOpt)),
+			grpc.WithStreamInterceptor(logging.StreamClientInterceptor(InterceptorLogger(logger), loggingOpt)),
+		)
 	}
 	return grpcDialOptions, nil
 }

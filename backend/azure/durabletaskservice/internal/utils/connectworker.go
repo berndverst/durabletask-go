@@ -2,6 +2,8 @@ package utils
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -14,9 +16,11 @@ import (
 
 var UserAgent = "dev/1"
 
+// Set to true to enable debug logging
+const ConnectWorkerDebug = false
+
 func ConnectWorker(
 	ctx context.Context,
-	testID string,
 	taskHub string,
 	worker backend.TaskHubWorkerClient,
 	orchestratorFns OrchestratorFnList,
@@ -24,9 +28,19 @@ func ConnectWorker(
 	serverMsgChan chan<- *backend.ConnectWorkerServerMessage,
 	clientMsgChan <-chan *backend.ConnectWorkerClientMessage,
 	readyCb func(),
-	debug bool,
 ) error {
 	defer close(serverMsgChan)
+
+	// Stream ID used for correlating debug logs
+	var streamID string
+	if ConnectWorkerDebug {
+		streamIDBytes := make([]byte, 4)
+		_, err := io.ReadFull(rand.Reader, streamIDBytes)
+		if err != nil {
+			return fmt.Errorf("failed to generate stream ID: %w", err)
+		}
+		streamID = hex.EncodeToString(streamIDBytes)
+	}
 
 	// Establish the ConnectWorker stream
 	// streamCtx := metadata.AppendToOutgoingContext(ctx,
@@ -53,7 +67,7 @@ func ConnectWorker(
 
 	// Wait for the first message
 	timeout := time.NewTimer(5 * time.Second)
-	configReceived := make(chan error, 1)
+	configReceived := make(chan error)
 	var wc *backend.WorkerConfiguration
 	go func() {
 		msg, err := stream.Recv()
@@ -68,7 +82,9 @@ func ConnectWorker(
 			return
 		}
 
-		log.Printf("[%s] Received configuration message: %v", testID, wc)
+		if ConnectWorkerDebug {
+			log.Printf("[%s] Received configuration message: %v", streamID, wc)
+		}
 		close(configReceived)
 	}()
 
@@ -176,7 +192,7 @@ func ConnectWorker(
 		case err = <-errChan:
 			// io.EOF means the stream was closed by the server, so we can return cleanly
 			if errors.Is(err, io.EOF) {
-				log.Printf("[%s] Stream ended…", testID)
+				log.Printf("[%s] Stream ended…", streamID)
 				return nil
 			}
 
@@ -189,12 +205,12 @@ func ConnectWorker(
 
 			// Do not send pings
 			if msg.GetMessage() != nil {
-				if debug {
-					log.Printf("[%s] Received message: %v", testID, msg)
+				if ConnectWorkerDebug {
+					log.Printf("[%s] Received message: %v", streamID, msg)
 				}
 				serverMsgChan <- msg
-			} else if debug {
-				log.Printf("[%s] Received ping from server", testID)
+			} else if ConnectWorkerDebug {
+				log.Printf("[%s] Received ping from server", streamID)
 			}
 
 		case <-healthCheckTick.C:
