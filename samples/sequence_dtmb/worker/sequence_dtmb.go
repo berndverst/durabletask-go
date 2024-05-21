@@ -9,10 +9,15 @@ import (
 	"github.com/microsoft/durabletask-go/backend"
 	"github.com/microsoft/durabletask-go/backend/azure/durabletaskservice"
 	"github.com/microsoft/durabletask-go/task"
+
 	"go.uber.org/zap"
 )
 
 func main() {
+	zaplogger, _ := zap.NewProduction()
+	defer zaplogger.Sync() // flushes buffer, if any
+	logger := zaplogger.Sugar()
+
 	// Create a new task registry and add the orchestrator and activities
 	r := task.NewTaskRegistry()
 	r.AddOrchestrator(ActivitySequenceOrchestrator)
@@ -20,7 +25,7 @@ func main() {
 
 	// Init the client
 	ctx := context.Background()
-	worker, err := Init(ctx, r)
+	worker, err := Init(ctx, r, logger)
 	if err != nil {
 		log.Fatalf("Failed to initialize the client: %v", err)
 	}
@@ -34,11 +39,7 @@ func main() {
 }
 
 // Init creates and initializes an in-memory client and worker pair with default configuration.
-func Init(ctx context.Context, r *task.TaskRegistry) (task.TaskHubWorker, error) {
-	zaplogger, _ := zap.NewProduction()
-	defer zaplogger.Sync() // flushes buffer, if any
-	logger := zaplogger.Sugar()
-
+func Init(ctx context.Context, r *task.TaskRegistry, logger backend.Logger) (task.TaskHubWorker, error) {
 	// Create an executor
 	executor := task.NewTaskExecutor(r)
 
