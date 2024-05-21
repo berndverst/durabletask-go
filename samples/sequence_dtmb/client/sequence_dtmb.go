@@ -124,15 +124,19 @@ func Init(ctx context.Context, logger backend.Logger) (backend.TaskHubClient, er
 		return nil, err
 	}
 	// Create a new backend
-	options := &durabletaskservice.DurableTaskServiceBackendOptions{
-		Endpoint: "bernd01.whitecoast-aac30fd6.eastus.azurecontainerapps.io:443",
-		// Endpoint:        "localhost:5147",
-		AzureCredential: cred,
-
-		DisableAuth: true,
-		// Insecure:        true,
+	options := []durabletaskservice.DurableTaskServiceBackendConfigurationOption{
+		durabletaskservice.WithCredential(cred),
+		durabletaskservice.WithDisableAuth(),
 	}
-	be, err := durabletaskservice.NewDurableTaskServiceBackend(ctx, options, logger)
+
+	endpoint := os.Getenv("DURABLE_TASK_ENDPOINT")
+	if endpoint == "" {
+		endpoint = "localhost:5147"
+		options = append(options, durabletaskservice.WithInsecureMode())
+	}
+	taskHubName := "default"
+
+	be, err := durabletaskservice.NewDurableTaskServiceBackend(ctx, logger, endpoint, taskHubName, options...)
 	if err != nil {
 		return nil, err
 	}
