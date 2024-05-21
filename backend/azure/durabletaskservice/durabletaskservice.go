@@ -130,55 +130,36 @@ func (d *durableTaskService) Start(ctx context.Context, orchestrators []string, 
 
 func (d *durableTaskService) connectWorker(ctx context.Context, orchestrators []string, activities []string) error {
 	// Establish the ConnectWorker stream
-	worker := d.client
 	var taskHubName string = "default" // make this configurable
-	var testID string = "some-test-id" // make this configurable
 
 	readyCh := make(chan struct{})
 	bgErrCh := make(chan error)
 	d.connectWorkerClientStream = make(chan *dtmbprotos.ConnectWorkerClientMessage)
 	serverMessageChan := make(chan *dtmbprotos.ConnectWorkerServerMessage)
 
-	var orchestratorFnList utils.OrchestratorFnList = orchestrators
-	var activityFnList utils.ActivityFnList = activities
-
 	// start the bidirectional stream
 	go func() {
 		bgErrCh <- utils.ConnectWorker(
 			ctx,
-			testID,
 			taskHubName,
-			worker.TaskHubWorkerClient,
-			orchestratorFnList,
-			activityFnList,
+			d.client.TaskHubWorkerClient,
+			orchestrators,
+			activities,
 			serverMessageChan,
 			d.connectWorkerClientStream,
 			func() {
 				close(readyCh)
 			},
-			false, // enable for debug
 		)
 	}()
 
 	// Wait for readiness
 	select {
 	case err := <-bgErrCh: // This includes a timeout too
-		d.logger.Errorf("[%s] Error starting test: %v", testID, err)
+		d.logger.Errorf("Error starting worker stream: %v", err)
 		return err
 	case <-readyCh:
 		// All good
-	}
-
-	// Do a ping as last warm-up
-	pingCtx, pingCancel := context.WithTimeout(ctx, 15*time.Second)
-	// pingCtx = metadata.AppendToOutgoingContext(pingCtx,
-	// 	"taskhub", taskHubName,
-	// )
-	_, err := worker.Ping(pingCtx, &dtmbprotos.PingRequest{})
-	pingCancel()
-	if err != nil {
-		d.logger.Errorf("[%s] Ping error: %v", testID, err)
-		return fmt.Errorf("ping error: %w", err)
 	}
 
 	// Execute messages in background
