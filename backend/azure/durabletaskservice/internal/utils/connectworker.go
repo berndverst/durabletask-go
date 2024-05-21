@@ -237,7 +237,27 @@ func connectWorkerInternal(
 				// Send another message
 				err = stream.Send(msg)
 				if err != nil {
+					// First, send the error
 					sendErr(fmt.Errorf("error sending message to server: %w", err))
+
+					// Add the message to the queue of failed messages to be retried later
+					retryClientMsgChan <- msg
+
+					return
+				}
+
+				// Reset the ping ticker
+				tick.Reset(tickInterval)
+
+			case msg := <-retryClientMsgChan:
+				err = stream.Send(msg)
+				if err != nil {
+					// First, send the error
+					sendErr(fmt.Errorf("error sending message to server: %w", err))
+
+					// Add the message to the queue of failed messages to be retried later
+					retryClientMsgChan <- msg
+
 					return
 				}
 
