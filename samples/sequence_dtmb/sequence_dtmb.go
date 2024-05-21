@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/microsoft/durabletask-go/backend"
@@ -59,13 +60,21 @@ func Init(ctx context.Context, r *task.TaskRegistry) (backend.TaskHubClient, tas
 		return nil, nil, err
 	}
 	// Create a new backend
-	options := &durabletaskservice.DurableTaskServiceBackendOptions{
-		Endpoint:        "localhost:5147",
-		AzureCredential: cred,
-		DisableAuth:     true,
+	options := []durabletaskservice.DurableTaskServiceBackendConfigurationOption{
+		durabletaskservice.WithCredential(cred),
+		durabletaskservice.WithDisableAuth(),
 	}
-	be, err := durabletaskservice.NewDurableTaskServiceBackend(ctx, options, logger)
+
+	endpoint := os.Getenv("DURABLE_TASK_ENDPOINT")
+	if endpoint == "" {
+		endpoint = "localhost:5147"
+		options = append(options, durabletaskservice.WithInsecureMode())
+	}
+	taskHubName := "default"
+
+	be, err := durabletaskservice.NewDurableTaskServiceBackend(ctx, logger, endpoint, taskHubName, options...)
 	if err != nil {
+		fmt.Printf("encountered error %s", err)
 		return nil, nil, err
 	}
 

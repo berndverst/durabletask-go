@@ -7,10 +7,6 @@ import (
 	dtmbprotos "github.com/microsoft/durabletask-go/backend/azure/durabletaskservice/internal/backend/v1"
 )
 
-const (
-	DefaultOrchestrationHistoryCacheSize int = 100
-)
-
 type SyncQueue[T dtmbprotos.ExecuteOrchestrationMessage | dtmbprotos.ExecuteActivityMessage | dtmbprotos.Event] struct {
 	lock  *sync.RWMutex
 	items []*T
@@ -132,18 +128,10 @@ type orchestrationHistoryItem struct {
 	historyEvents   *SyncQueue[dtmbprotos.Event]
 }
 
-func NewOrchestrationHistoryCache(capacity *int) OrchestrationHistoryCache {
-	if capacity == nil {
-		return OrchestrationHistoryCache{
-			lock:     &sync.Mutex{},
-			capacity: DefaultOrchestrationHistoryCacheSize,
-			cache:    make(map[string]*list.Element),
-			list:     list.New(),
-		}
-	}
-
+func NewOrchestrationHistoryCache(capacity int) OrchestrationHistoryCache {
 	return OrchestrationHistoryCache{
-		capacity: *capacity,
+		lock:     &sync.Mutex{},
+		capacity: capacity,
 		cache:    make(map[string]*list.Element),
 		list:     list.New(),
 	}
