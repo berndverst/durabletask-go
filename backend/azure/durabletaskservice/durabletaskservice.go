@@ -4,13 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
-	"strings"
 	"sync/atomic"
 	"time"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/microsoft/durabletask-go/api"
 	"github.com/microsoft/durabletask-go/backend"
 	"github.com/microsoft/durabletask-go/internal/protos"
@@ -23,11 +19,6 @@ import (
 	"github.com/microsoft/durabletask-go/backend/azure/durabletaskservice/internal/utils"
 )
 
-const (
-	// DefaultEndpoint is the default endpoint for the DurableTaskServiceBackend service.
-	defaultEndpoint = "localhost:50051"
-)
-
 type TaskHubClient struct {
 	dtmbprotos.TaskHubClientClient
 	dtmbprotos.TaskHubWorkerClient
@@ -35,8 +26,7 @@ type TaskHubClient struct {
 
 type durableTaskService struct {
 	logger                     backend.Logger
-	endpoint                   string
-	options                    *DurableTaskServiceBackendOptions
+	options                    *durableTaskServiceBackendOptions
 	orchestrationQueue         utils.SyncQueue[dtmbprotos.ExecuteOrchestrationMessage]
 	activityQueue              utils.SyncQueue[dtmbprotos.ExecuteActivityMessage]
 	orchestrationHistoryCache  utils.OrchestrationHistoryCache
@@ -47,73 +37,25 @@ type durableTaskService struct {
 	orchestrationTaskIDManager utils.OrchestrationTaskCounter
 }
 
-type DurableTaskServiceBackendOptions struct {
-	Endpoint        string
-	TaskHubName     string
-	ResourceScopes  []string
-	TenantID        string
-	ClientID        string
-	AzureCredential azcore.TokenCredential
-	DisableAuth     bool
-	Orchestrators   []string
-	Activities      []string
-	Insecure        bool
-}
-
-func NewDurableTaskServiceBackendOptions(endpoint string, taskHubName string, credential azcore.TokenCredential) *DurableTaskServiceBackendOptions {
-	defaultPort := "443"
-	if endpoint == "" {
-		endpoint = defaultEndpoint
-	} else {
-		protocolParts := strings.Split("://", endpoint)
-		if len(protocolParts) == 2 {
-			endpoint = protocolParts[1]
-		}
-
-		_, _, err := net.SplitHostPort(endpoint)
-		if err != nil {
-			endpoint = fmt.Sprintf("%s:%s", endpoint, defaultPort)
-		}
-	}
-	if taskHubName == "" {
-		taskHubName = "default"
-	}
-	return &DurableTaskServiceBackendOptions{
-		Endpoint:        endpoint,
-		TaskHubName:     taskHubName,
-		ResourceScopes:  []string{},
-		AzureCredential: credential,
-		TenantID:        "",
-		ClientID:        "",
-		DisableAuth:     false,
-		Insecure:        false,
-	}
-}
-
-func NewDurableTaskServiceBackend(ctx context.Context, opts *DurableTaskServiceBackendOptions, logger backend.Logger) (backend.Backend, error) {
+func NewDurableTaskServiceBackend(ctx context.Context, logger backend.Logger, endpoint string, taskHubName string, options ...DurableTaskServiceBackendConfigurationOption) (backend.Backend, error) {
 	be := &durableTaskService{
 		logger: logger,
 	}
 
-	if opts == nil {
-		credential, err := azidentity.NewDefaultAzureCredential(nil)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get default azure credentials: %v", err)
-		}
-		opts = NewDurableTaskServiceBackendOptions(defaultEndpoint, "default", credential)
+	var err error
+	be.options, err = newDurableTaskServiceBackendConfiguration(endpoint, taskHubName, options...)
+	if err != nil {
+		return nil, err
 	}
-	be.options = opts
-	be.endpoint = opts.Endpoint
 
-	userAgent := "durabetask-go"
 	grpcDialOptions, optionErr := utils.CreateGrpcDialOptions(
-		ctx, logger, be.options.Insecure, be.options.DisableAuth, be.options.TaskHubName, userAgent, &be.options.AzureCredential, be.options.ResourceScopes, be.options.TenantID)
+		ctx, logger, be.options.Insecure, be.options.DisableAuth, be.options.TaskHubName, be.options.UserAgent, &be.options.AzureCredential, be.options.ResourceScopes, be.options.TenantID)
 	if optionErr != nil {
 		return nil, optionErr
 	}
 
 	connCtx, connCancel := context.WithTimeout(ctx, 15*time.Second) // TODO: make this a configurable timeout
-	conn, err := grpc.DialContext(connCtx, be.endpoint, grpcDialOptions...)
+	conn, err := grpc.DialContext(connCtx, be.options.Endpoint, grpcDialOptions...)
 	connCancel()
 
 	if err != nil {
@@ -175,7 +117,7 @@ func (d *durableTaskService) Start(ctx context.Context, orchestrators []string, 
 	d.orchestrationQueue = utils.NewSyncQueue[dtmbprotos.ExecuteOrchestrationMessage]()
 	d.activityQueue = utils.NewSyncQueue[dtmbprotos.ExecuteActivityMessage]()
 
-	d.orchestrationHistoryCache = utils.NewOrchestrationHistoryCache(nil) // TODO: make capacity configurable
+	d.orchestrationHistoryCache = utils.NewOrchestrationHistoryCache(d.options.OrchestrationHistoryCacheSize) // TODO: make capacity configurable
 	d.orchestrationTaskIDManager = utils.NewOrchestrationTaskIDManager()
 
 	err := d.connectWorker(ctxWithCancel, orchestrators, activities)
