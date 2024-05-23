@@ -340,10 +340,10 @@ func (d *durableTaskService) GetOrchestrationWorkItem(ctx context.Context) (*bac
 		State:      orchestationRuntimeState,
 		RetryCount: int32(item.GetRetryCount()),
 		Properties: map[string]interface{}{
-			"CompletionToken":   item.GetCompletionToken(),
-			"OrchestrationName": item.GetName(),
-			"Version":           item.GetVersion(),
-			"ExecutionId":       item.GetExecutionId(),
+			"CompletionToken":      item.GetCompletionToken(),
+			"OrchestrationName":    item.GetName(),
+			"OrchestrationVersion": item.GetVersion(),
+			"ExecutionId":          item.GetExecutionId(),
 		},
 	}
 	return ret, nil
@@ -492,30 +492,34 @@ func extractActionsFromOrchestrationState(state *backend.OrchestrationRuntimeSta
 					},
 				},
 			}
-			// Do we need these types??
-			// =============================
-			// case *protos.HistoryEvent_SubOrchestrationInstanceCompleted:
-			// 	result := []byte(typedEvent.SubOrchestrationInstanceCompleted.GetResult().GetValue())
-			// 	action = &dtmbprotos.OrchestratorAction{
-			// 		OrchestratorActionType: &dtmbprotos.OrchestratorAction_CompleteOrchestration{
-			// 			CompleteOrchestration: &dtmbprotos.CompleteOrchestrationOrchestratorAction{
-			// 				OrchestrationStatus: dtmbprotos.OrchestrationStatus_COMPLETED,
-			// 				FailureDetails:      nil,
-			// 				Result:              result,
-			// 			},
-			// 		},
-			// 	}
-			// case *protos.HistoryEvent_SubOrchestrationInstanceFailed:
-			// 	failureDetails := utils.ConvertTaskFailureDetails(typedEvent.SubOrchestrationInstanceFailed.GetFailureDetails())
-			// 	action = &dtmbprotos.OrchestratorAction{
-			// 		OrchestratorActionType: &dtmbprotos.OrchestratorAction_CompleteOrchestration{
-			// 			CompleteOrchestration: &dtmbprotos.CompleteOrchestrationOrchestratorAction{
-			// 				OrchestrationStatus: dtmbprotos.OrchestrationStatus_FAILED,
-			// 				FailureDetails:      failureDetails,
-			// 				Result:              nil,
-			// 			},
-			// 		},
-			// 	}
+		case *protos.HistoryEvent_SubOrchestrationInstanceCompleted:
+			var result []byte = nil
+			if typedEvent.SubOrchestrationInstanceCompleted.GetResult() != nil {
+				result = []byte(typedEvent.SubOrchestrationInstanceCompleted.GetResult().GetValue())
+			}
+			action = &dtmbprotos.OrchestratorAction{
+				OrchestratorActionType: &dtmbprotos.OrchestratorAction_CompleteOrchestration{
+					CompleteOrchestration: &dtmbprotos.CompleteOrchestrationOrchestratorAction{
+						OrchestrationStatus: dtmbprotos.OrchestrationStatus_COMPLETED,
+						FailureDetails:      nil,
+						Result:              result,
+					},
+				},
+			}
+		case *protos.HistoryEvent_SubOrchestrationInstanceFailed:
+			var failureDetails *dtmbprotos.FailureDetails = nil
+			if typedEvent.SubOrchestrationInstanceFailed.GetFailureDetails() != nil {
+				failureDetails = utils.ConvertTaskFailureDetails(typedEvent.SubOrchestrationInstanceFailed.GetFailureDetails())
+			}
+			action = &dtmbprotos.OrchestratorAction{
+				OrchestratorActionType: &dtmbprotos.OrchestratorAction_CompleteOrchestration{
+					CompleteOrchestration: &dtmbprotos.CompleteOrchestrationOrchestratorAction{
+						OrchestrationStatus: dtmbprotos.OrchestrationStatus_FAILED,
+						FailureDetails:      failureDetails,
+						Result:              nil,
+					},
+				},
+			}
 		}
 		if action != nil {
 			actions = append(actions, action)
@@ -528,7 +532,7 @@ func extractActionsFromOrchestrationState(state *backend.OrchestrationRuntimeSta
 func (d *durableTaskService) CompleteOrchestrationWorkItem(_ context.Context, item *backend.OrchestrationWorkItem) error {
 	completionToken := item.Properties["CompletionToken"].(string)
 	orchestrationName := item.Properties["OrchestrationName"].(string)
-	version := item.Properties["Version"].(string)
+	version := item.Properties["OrchestrationVersion"].(string)
 
 	completionMessage := &dtmbprotos.ConnectWorkerClientMessage{
 		Message: &dtmbprotos.ConnectWorkerClientMessage_CompleteOrchestration{
@@ -562,7 +566,7 @@ func (d *durableTaskService) CompleteOrchestrationWorkItem(_ context.Context, it
 func (d *durableTaskService) AbandonOrchestrationWorkItem(_ context.Context, item *backend.OrchestrationWorkItem) error {
 	completionToken := item.Properties["CompletionToken"].(string)
 	orchestrationName := item.Properties["OrchestrationName"].(string)
-	version := item.Properties["Version"].(string)
+	version := item.Properties["OrchestrationVersion"].(string)
 
 	d.connectWorkerClientStream <- &dtmbprotos.ConnectWorkerClientMessage{
 		Message: &dtmbprotos.ConnectWorkerClientMessage_AbandonOrchestration{
@@ -598,13 +602,12 @@ func (d *durableTaskService) GetActivityWorkItem(context.Context) (*backend.Acti
 	}
 
 	ret = &backend.ActivityWorkItem{
-		// SequenceNumber: 0, // TODO: Determine if this is required and how to obtain it
 		InstanceID: api.InstanceID(item.GetOrchestrationId()),
 		NewEvent:   &event,
 		Properties: map[string]interface{}{
 			"CompletionToken": item.GetCompletionToken(),
 			"ActivityName":    item.GetName(),
-			"ExecutionId":     item.GetExecutionId(), // probably not needed
+			"ExecutionId":     item.GetExecutionId(),
 		},
 	}
 	return ret, nil
