@@ -11,10 +11,16 @@ import (
 )
 
 func ToStringWrapper(data []byte) *wrapperspb.StringValue {
+	// if !utf8.Valid(data) {
+	// 	return &wrapperspb.StringValue{Value: base64.StdEncoding.EncodeToString(data)}
+	// }
 	return &wrapperspb.StringValue{Value: string(data)}
 }
 
 func WrapString(data string) *wrapperspb.StringValue {
+	// if !utf8.ValidString(data) {
+	// 	return &wrapperspb.StringValue{Value: base64.StdEncoding.EncodeToString([]byte(data))}
+	// }
 	return &wrapperspb.StringValue{Value: data}
 }
 
@@ -46,12 +52,47 @@ func ConvertTaskFailureDetails(taskFailureDetails *protos.TaskFailureDetails) *d
 	}
 }
 
+func ConvertOrchestrationIdReusePolicyToDurableTaskServiceBackend(policy protos.OrchestrationIdReusePolicy) dtmbprotos.OrchestrationIDReusePolicy {
+	res := dtmbprotos.OrchestrationIDReusePolicy{}
+	switch policy.Action {
+	case protos.CreateOrchestrationAction_ERROR:
+		res.Action = dtmbprotos.OrchestrationIDReusePolicy_IGNORE
+	case protos.CreateOrchestrationAction_TERMINATE:
+		res.Action = dtmbprotos.OrchestrationIDReusePolicy_TERMINATE
+	case protos.CreateOrchestrationAction_IGNORE:
+		res.Action = dtmbprotos.OrchestrationIDReusePolicy_IGNORE
+	}
+
+	var dtsStatuses []dtmbprotos.OrchestrationStatus
+	for _, status := range policy.OperationStatus {
+		switch status {
+		case protos.OrchestrationStatus_ORCHESTRATION_STATUS_COMPLETED:
+			dtsStatuses = append(dtsStatuses, dtmbprotos.OrchestrationStatus_COMPLETED)
+		case protos.OrchestrationStatus_ORCHESTRATION_STATUS_FAILED:
+			dtsStatuses = append(dtsStatuses, dtmbprotos.OrchestrationStatus_FAILED)
+		case protos.OrchestrationStatus_ORCHESTRATION_STATUS_CANCELED:
+			dtsStatuses = append(dtsStatuses, dtmbprotos.OrchestrationStatus_CANCELED)
+		case protos.OrchestrationStatus_ORCHESTRATION_STATUS_RUNNING:
+			dtsStatuses = append(dtsStatuses, dtmbprotos.OrchestrationStatus_RUNNING)
+		case protos.OrchestrationStatus_ORCHESTRATION_STATUS_TERMINATED:
+			dtsStatuses = append(dtsStatuses, dtmbprotos.OrchestrationStatus_TERMINATED)
+		case protos.OrchestrationStatus_ORCHESTRATION_STATUS_CONTINUED_AS_NEW:
+			dtsStatuses = append(dtsStatuses, dtmbprotos.OrchestrationStatus_CONTINUED_AS_NEW)
+		case protos.OrchestrationStatus_ORCHESTRATION_STATUS_PENDING:
+			dtsStatuses = append(dtsStatuses, dtmbprotos.OrchestrationStatus_PENDING)
+		}
+	}
+	res.RuntimeStatus = dtsStatuses
+
+	return res
+}
+
 func convertExecutionStartedEvent(typedEvent *dtmbprotos.Event_ExecutionStarted) *protos.HistoryEvent_ExecutionStarted {
 	return &protos.HistoryEvent_ExecutionStarted{
 		ExecutionStarted: &protos.ExecutionStartedEvent{
 			Name:    typedEvent.ExecutionStarted.GetName(),
 			Version: WrapString(typedEvent.ExecutionStarted.GetVersion()),
-			Input:   ToStringWrapper(typedEvent.ExecutionStarted.GetInput()), // what if this is not string
+			Input:   ToStringWrapper(typedEvent.ExecutionStarted.GetInput()),
 			OrchestrationInstance: &protos.OrchestrationInstance{
 				InstanceId:  typedEvent.ExecutionStarted.GetOrchestrationId(),
 				ExecutionId: wrapperspb.String(typedEvent.ExecutionStarted.GetExecutionId()),
@@ -90,7 +131,7 @@ func convertExecutionCompletedEvent(typedEvent *dtmbprotos.Event_ExecutionComple
 func convertExecutionTerminatedEvent(typedEvent *dtmbprotos.Event_ExecutionTerminated) *protos.HistoryEvent_ExecutionTerminated {
 	return &protos.HistoryEvent_ExecutionTerminated{
 		ExecutionTerminated: &protos.ExecutionTerminatedEvent{
-			Input:   ToStringWrapper(typedEvent.ExecutionTerminated.GetReason()), // what if this is not string
+			Input:   ToStringWrapper(typedEvent.ExecutionTerminated.GetReason()),
 			Recurse: !typedEvent.ExecutionTerminated.GetNonRecursive(),
 		},
 	}
@@ -99,7 +140,7 @@ func convertExecutionTerminatedEvent(typedEvent *dtmbprotos.Event_ExecutionTermi
 func convertExecutionResumedEvent(typedEvent *dtmbprotos.Event_ExecutionResumed) *protos.HistoryEvent_ExecutionResumed {
 	return &protos.HistoryEvent_ExecutionResumed{
 		ExecutionResumed: &protos.ExecutionResumedEvent{
-			Input: ToStringWrapper(typedEvent.ExecutionResumed.GetInput()), // what if this is not string
+			Input: ToStringWrapper(typedEvent.ExecutionResumed.GetInput()),
 		},
 	}
 }
@@ -107,7 +148,7 @@ func convertExecutionResumedEvent(typedEvent *dtmbprotos.Event_ExecutionResumed)
 func convertExecutionSuspendedEvent(typedEvent *dtmbprotos.Event_ExecutionSuspended) *protos.HistoryEvent_ExecutionSuspended {
 	return &protos.HistoryEvent_ExecutionSuspended{
 		ExecutionSuspended: &protos.ExecutionSuspendedEvent{
-			Input: ToStringWrapper(typedEvent.ExecutionSuspended.GetInput()), // what if this is not string
+			Input: ToStringWrapper(typedEvent.ExecutionSuspended.GetInput()),
 		},
 	}
 }
@@ -115,7 +156,7 @@ func convertExecutionSuspendedEvent(typedEvent *dtmbprotos.Event_ExecutionSuspen
 func convertContinueAsNewEvent(typedEvent *dtmbprotos.Event_ContinueAsNew) *protos.HistoryEvent_ContinueAsNew {
 	return &protos.HistoryEvent_ContinueAsNew{
 		ContinueAsNew: &protos.ContinueAsNewEvent{
-			Input: ToStringWrapper(typedEvent.ContinueAsNew.GetInput()), // what if this is not string
+			Input: ToStringWrapper(typedEvent.ContinueAsNew.GetInput()),
 		},
 	}
 }
@@ -138,8 +179,8 @@ func convertActivityScheduledEvent(typedEvent *dtmbprotos.Event_ActivitySchedule
 	return &protos.HistoryEvent_TaskScheduled{
 		TaskScheduled: &protos.TaskScheduledEvent{
 			Name:  typedEvent.ActivityScheduled.GetName(),
-			Input: ToStringWrapper(typedEvent.ActivityScheduled.GetInput()), // what if this is not string
-			// Version  // Activities are not versioned in DurableTaskServiceBackend
+			Input: ToStringWrapper(typedEvent.ActivityScheduled.GetInput()),
+			// Version  // TODO: Wait for Alessandro to implement versioning of activities
 			ParentTraceContext: nil,
 			// &protos.TraceContext{
 			// TraceParent: typedEvent.ActivityScheduled.GetParentTraceContext().GetTraceParent(), // failed to parse trace context: hex encoded trace-id must have length equals to 32
@@ -154,7 +195,7 @@ func convertActivityCompletedEvent(taskIDManager *OrchestrationTaskCounter, orch
 	return &protos.HistoryEvent_TaskCompleted{
 		TaskCompleted: &protos.TaskCompletedEvent{
 			TaskScheduledId: taskIDManager.GetTaskNumber(orchestrationID, typedEvent.ActivityCompleted.GetRelatedSequenceNumber()),
-			Result:          ToStringWrapper(typedEvent.ActivityCompleted.GetResult()), // what if this is not string
+			Result:          ToStringWrapper(typedEvent.ActivityCompleted.GetResult()),
 		},
 	}
 }
@@ -172,7 +213,7 @@ func convertEventRaisedEvent(typedEvent *dtmbprotos.Event_EventRaised) *protos.H
 	return &protos.HistoryEvent_EventRaised{
 		EventRaised: &protos.EventRaisedEvent{
 			Name:  typedEvent.EventRaised.GetName(),
-			Input: ToStringWrapper(typedEvent.EventRaised.GetInput()), // what if this is not string
+			Input: ToStringWrapper(typedEvent.EventRaised.GetInput()),
 		},
 	}
 }
@@ -182,7 +223,7 @@ func convertEventSentEvent(typedEvent *dtmbprotos.Event_EventSent) *protos.Histo
 		EventSent: &protos.EventSentEvent{
 			InstanceId: typedEvent.EventSent.GetOrchestrationId(),
 			Name:       typedEvent.EventSent.GetName(),
-			Input:      ToStringWrapper(typedEvent.EventSent.GetInput()), // what if this is not string
+			Input:      ToStringWrapper(typedEvent.EventSent.GetInput()),
 		},
 	}
 }
@@ -230,7 +271,7 @@ func convertSuborchestrationInstanceCompletedEvent(taskIDManager *OrchestrationT
 	return &protos.HistoryEvent_SubOrchestrationInstanceCompleted{
 		SubOrchestrationInstanceCompleted: &protos.SubOrchestrationInstanceCompletedEvent{
 			TaskScheduledId: taskIDManager.GetTaskNumber(orchestrationID, typedEvent.SubOrchestrationInstanceCompleted.GetRelatedSequenceNumber()),
-			Result:          ToStringWrapper(typedEvent.SubOrchestrationInstanceCompleted.GetResult()), // what if this is not string
+			Result:          ToStringWrapper(typedEvent.SubOrchestrationInstanceCompleted.GetResult()),
 		},
 	}
 }
@@ -247,7 +288,7 @@ func convertSuborchestrationInstanceFailedEvent(taskIDManager *OrchestrationTask
 func convertGenericEvent(typedEvent *dtmbprotos.Event_GenericEvent) *protos.HistoryEvent_GenericEvent {
 	return &protos.HistoryEvent_GenericEvent{
 		GenericEvent: &protos.GenericEvent{
-			Data: ToStringWrapper(typedEvent.GenericEvent.GetData()), // what if this is not string
+			Data: ToStringWrapper(typedEvent.GenericEvent.GetData()),
 		},
 	}
 }

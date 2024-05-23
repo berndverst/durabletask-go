@@ -15,14 +15,13 @@ import (
 	"github.com/microsoft/durabletask-go/backend/azure/durabletaskservice/internal/backend/v1"
 )
 
-var UserAgent = "dev/1"
-
 // Set to true to enable debug logging
 const ConnectWorkerDebug = false
 
 func ConnectWorker(
 	ctx context.Context,
 	taskHub string,
+	userAgent string,
 	worker backend.TaskHubWorkerClient,
 	orchestratorFns OrchestratorFnList,
 	activityFns ActivityFnList,
@@ -47,7 +46,7 @@ func ConnectWorker(
 
 	// Define the establishWorkerConnection message
 	establishWorkerConnectionMsg := &backend.EstablishWorkerConnectionMessage{
-		Version:              UserAgent,
+		Version:              userAgent,
 		ActivityFunction:     activityFns.ToProto(),
 		OrchestratorFunction: orchestratorFns.ToProto(),
 	}
@@ -70,7 +69,7 @@ func ConnectWorker(
 		// Invoke the connectWorkerInternal method to perform the rest of the work
 		workerConfig, err := connectWorkerInternal(
 			ctx, streamID,
-			taskHub, worker,
+			worker,
 			establishWorkerConnectionMsg,
 			serverMsgChan, clientMsgChan, retryClientMsgChan,
 			readyCb,
@@ -117,7 +116,6 @@ func ConnectWorker(
 func connectWorkerInternal(
 	ctx context.Context,
 	streamID string,
-	taskHub string,
 	worker backend.TaskHubWorkerClient,
 	establishWorkerConnectionMsg *backend.EstablishWorkerConnectionMessage,
 	serverMsgChan chan<- *backend.ConnectWorkerServerMessage,

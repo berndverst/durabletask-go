@@ -26,7 +26,7 @@ type TaskHubClient struct {
 
 type durableTaskService struct {
 	logger                     backend.Logger
-	options                    *durableTaskServiceBackendOptions
+	config                     *durableTaskServiceBackendOptions
 	orchestrationQueue         utils.SyncQueue[dtmbprotos.ExecuteOrchestrationMessage]
 	activityQueue              utils.SyncQueue[dtmbprotos.ExecuteActivityMessage]
 	orchestrationHistoryCache  utils.OrchestrationHistoryCache
@@ -43,19 +43,19 @@ func NewDurableTaskServiceBackend(ctx context.Context, logger backend.Logger, en
 	}
 
 	var err error
-	be.options, err = newDurableTaskServiceBackendConfiguration(endpoint, taskHubName, options...)
+	be.config, err = newDurableTaskServiceBackendConfiguration(endpoint, taskHubName, options...)
 	if err != nil {
 		return nil, err
 	}
 
 	grpcDialOptions, optionErr := utils.CreateGrpcDialOptions(
-		ctx, logger, be.options.Insecure, be.options.DisableAuth, be.options.TaskHubName, be.options.UserAgent, &be.options.AzureCredential, be.options.ResourceScopes, be.options.TenantID)
+		ctx, logger, be.config.Insecure, be.config.DisableAuth, be.config.TaskHubName, be.config.UserAgent, &be.config.AzureCredential, be.config.ResourceScopes, be.config.TenantID)
 	if optionErr != nil {
 		return nil, optionErr
 	}
 
 	connCtx, connCancel := context.WithTimeout(ctx, 15*time.Second) // TODO: make this a configurable timeout
-	conn, err := grpc.DialContext(connCtx, be.options.Endpoint, grpcDialOptions...)
+	conn, err := grpc.DialContext(connCtx, be.config.Endpoint, grpcDialOptions...)
 	connCancel()
 
 	if err != nil {
@@ -102,11 +102,11 @@ func (d *durableTaskService) Start(ctx context.Context, orchestrators []string, 
 	ctxWithCancel, d.workerCancelFunc = context.WithCancel(ctx)
 
 	if len(orchestrators) == 0 {
-		orchestrators = d.options.Orchestrators
+		orchestrators = d.config.Orchestrators
 	}
 
 	if len(activities) == 0 {
-		activities = d.options.Activities
+		activities = d.config.Activities
 	}
 
 	d.logger.Debug("Starting DurableTaskServiceBackend")
@@ -117,7 +117,7 @@ func (d *durableTaskService) Start(ctx context.Context, orchestrators []string, 
 	d.orchestrationQueue = utils.NewSyncQueue[dtmbprotos.ExecuteOrchestrationMessage]()
 	d.activityQueue = utils.NewSyncQueue[dtmbprotos.ExecuteActivityMessage]()
 
-	d.orchestrationHistoryCache = utils.NewOrchestrationHistoryCache(d.options.OrchestrationHistoryCacheSize) // TODO: make capacity configurable
+	d.orchestrationHistoryCache = utils.NewOrchestrationHistoryCache(d.config.OrchestrationHistoryCacheSize) // TODO: make capacity configurable
 	d.orchestrationTaskIDManager = utils.NewOrchestrationTaskIDManager()
 
 	err := d.connectWorker(ctxWithCancel, orchestrators, activities)
@@ -142,6 +142,7 @@ func (d *durableTaskService) connectWorker(ctx context.Context, orchestrators []
 		bgErrCh <- utils.ConnectWorker(
 			ctx,
 			taskHubName,
+			d.config.UserAgent,
 			d.client.TaskHubWorkerClient,
 			orchestrators,
 			activities,
@@ -213,13 +214,19 @@ func (d *durableTaskService) CreateOrchestrationInstance(ctx context.Context, ev
 		}
 	}
 
+	policy := protos.OrchestrationIdReusePolicy{}
+	for _, opt := range IdReusePolicy {
+		opt(&policy)
+	}
+	convertedPolicy := utils.ConvertOrchestrationIdReusePolicyToDurableTaskServiceBackend(policy)
+
 	_, err := d.client.CreateOrchestration(ctx, &dtmbprotos.CreateOrchestrationRequest{
 		OrchestrationId: executionStartedEvent.GetOrchestrationInstance().GetInstanceId(),
 		Name:            executionStartedEvent.GetName(),
 		Version:         executionStartedEvent.GetVersion().GetValue(),
 		Input:           []byte(executionStartedEvent.GetInput().GetValue()),
 		StartAt:         startTime,
-		// IdReusePolicy: // this is not implemented on the server
+		IdReusePolicy:   &convertedPolicy,
 	})
 
 	return err
@@ -240,7 +247,7 @@ func (d *durableTaskService) AddNewOrchestrationEvent(ctx context.Context, id ap
 		_, err = d.client.RaiseEvent(ctx, &req)
 
 	case *protos.HistoryEvent_ExecutionTerminated:
-		// this is a terminal event, so we can evict the cache
+		// the orchestration completed, so we can evict the cache
 		d.orchestrationHistoryCache.EvictCacheForOrchestrationID(string(id))
 		d.orchestrationTaskIDManager.PurgeOrchestration(string(id))
 		err = fmt.Errorf("not implemented in protos")
