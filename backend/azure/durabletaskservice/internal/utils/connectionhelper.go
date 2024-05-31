@@ -194,5 +194,6 @@ func CreateGrpcDialOptions(ctx context.Context, logger backend.Logger, isInsecur
 			grpc.WithStreamInterceptor(logging.StreamClientInterceptor(InterceptorLogger(logger), loggingOpt)),
 		)
 	}
+
 	return grpcDialOptions, nil
 }
