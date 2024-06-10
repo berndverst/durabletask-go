@@ -404,8 +404,8 @@ loop:
 }
 
 // mustEmbedUnimplementedTaskHubSidecarServiceServer implements protos.TaskHubSidecarServiceServer
-func (grpcExecutor) mustEmbedUnimplementedTaskHubSidecarServiceServer() {
-}
+func (grpcExecutor) mustEmbedUnimplementedTaskHubSidecarServiceServer() { //nolint:unused
+} // nolint:unused
 
 func createGetInstanceResponse(req *protos.GetInstanceRequest, metadata *api.OrchestrationMetadata) *protos.GetInstanceResponse {
 	state := &protos.OrchestrationState{

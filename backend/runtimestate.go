@@ -75,9 +75,10 @@ func (s *OrchestrationRuntimeState) addEvent(e *HistoryEvent, isNew bool) error 
 		s.isSuspended = true
 	} else if e.GetExecutionResumed() != nil {
 		s.isSuspended = false
-	} else {
-		// TODO: Check for other possible duplicates using task IDs
 	}
+	// else {
+	// TODO: Check for other possible duplicates using task IDs
+	// }
 
 	if isNew {
 		s.newEvents = append(s.newEvents, e)

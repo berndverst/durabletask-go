@@ -1245,20 +1245,20 @@ func Test_SingleActivity_ReuseInstanceIDError(t *testing.T) {
 	// Run the orchestration
 	id, err := client.ScheduleNewOrchestration(ctx, "SingleActivity", api.WithInput("世界"), api.WithInstanceID(instanceID))
 	require.NoError(t, err)
-	id, err = client.ScheduleNewOrchestration(ctx, "SingleActivity", api.WithInput("World"), api.WithInstanceID(id))
+	_, err = client.ScheduleNewOrchestration(ctx, "SingleActivity", api.WithInput("World"), api.WithInstanceID(id))
 	if assert.Error(t, err) {
 		assert.Contains(t, err.Error(), "orchestration instance already exists")
 	}
 }
 
-func initTaskHubWorker(ctx context.Context, r *task.TaskRegistry, opts ...backend.NewTaskWorkerOptions) (backend.TaskHubClient, backend.TaskHubWorker) {
+func initTaskHubWorker(ctx context.Context, r *task.TaskRegistry, opts ...backend.NewTaskWorkerOptions) (backend.TaskHubClient, task.TaskHubWorker) {
 	// TODO: Switch to options pattern
 	logger := backend.DefaultLogger()
 	be := sqlite.NewSqliteBackend(sqlite.NewSqliteOptions(""), logger)
 	executor := task.NewTaskExecutor(r)
 	orchestrationWorker := backend.NewOrchestrationWorker(be, executor, logger, opts...)
 	activityWorker := backend.NewActivityTaskWorker(be, executor, logger, opts...)
-	taskHubWorker := backend.NewTaskHubWorker(be, orchestrationWorker, activityWorker, logger)
+	taskHubWorker := task.NewTaskHubWorker(be, orchestrationWorker, activityWorker, logger, r)
 	if err := taskHubWorker.Start(ctx); err != nil {
 		panic(err)
 	}

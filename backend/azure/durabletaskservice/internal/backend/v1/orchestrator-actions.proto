@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+package dtmb.backend.v1;
+
+option go_package = "github.com/microsoft/dtmb-go/protos/backend/v1;backend";
+option csharp_namespace = "Microsoft.DTMB.Backend.Autogen.Grpc.v1";
+
+import "backend/v1/common.proto";
+
+message OrchestratorAction {
+    oneof orchestrator_action_type {
+        ScheduleActivityOrchestratorAction schedule_activity = 100 [json_name = "scheduleActivity"];
+        CreateSubOrchestrationOrchestratorAction create_sub_orchestration = 101 [json_name = "createSubOrchestration"];
+        CreateTimerOrchestratorAction create_timer = 102 [json_name = "createTimer"];
+        SendEventOrchestratorAction send_event = 103 [json_name = "sendEvent"];
+        CompleteOrchestrationOrchestratorAction complete_orchestration = 104 [json_name = "completeOrchestration"];
+        TerminateOrchestrationOrchestratorAction terminate_orchestration = 105 [json_name = "terminateOrchestration"];
+    }
+}
+
+// Requests scheduling a new activity execution.
+message ScheduleActivityOrchestratorAction {
+    // Activity name
+    string name = 1;
+    // Activity version
+    //string version = 2;
+    // Optionally make the activity start at a later time.
+    // If not specified, the activity will start immediately.
+    Delay start_at = 3 [json_name = "startAt"];
+    // Optional input data
+    bytes input = 10;
+}
+
+message CreateSubOrchestrationOrchestratorAction {
+    // The unique ID of the orchestration instance to create.
+    string orchestration_id = 1 [json_name = "orchestrationId"];
+    // Name of the orchestration to start.
+    string name = 2;
+    // Version of the orchestration to start.
+    string version = 3;
+    // Optional orchestration input data.
+    bytes input = 4;
+    // Optionally make the orchestration start at a later time.
+    // If not specified, the orchestration will start immediately.
+    Delay start_at = 10 [json_name = "startAt"];
+}
+
+message CreateTimerOrchestratorAction {
+    // Specify the delay to execute the timer
+    Delay start_at = 1 [json_name = "startAt"];
+}
+
+message SendEventOrchestratorAction {
+    // The given ID of the orchestration instance.
+    string instance_id = 1 [json_name = "instanceId"];
+    // Event name
+    string name = 2;
+    // Optional event data
+    bytes data = 10;
+}
+
+// Indicates the orchestration has completed, either successfully or with an error
+message CompleteOrchestrationOrchestratorAction {
+    // Status of the completed orchestration
+    OrchestrationStatus orchestration_status = 1 [json_name = "orchestrationStatus"];
+    // Failure details for failed orchestrations
+    FailureDetails failure_details = 3 [json_name = "failureDetails"];
+    // Optional output data
+    bytes result = 10;
+}
+
+message TerminateOrchestrationOrchestratorAction {
+    bool non_recursive = 3 [json_name = "nonRecursive"];
+    // Optional reason
+    bytes reason = 10;
+}

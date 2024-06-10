@@ -1,0 +1,13 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dtsclient-job50
+spec:
+  template:
+    spec:
+      containers:
+      - name: dtsclient
+        image: cabeverstacr.azurecr.io/dtsclient:latest
+        args: ["50"]
+      restartPolicy: Never
+  backoffLimit: 4

@@ -525,12 +525,12 @@ func (ctx *OrchestrationContext) onExternalEventRaised(e *protos.HistoryEvent) e
 	return nil
 }
 
-func (ctx *OrchestrationContext) onExecutionSuspended(er *protos.ExecutionSuspendedEvent) error {
+func (ctx *OrchestrationContext) onExecutionSuspended(_ *protos.ExecutionSuspendedEvent) error {
 	ctx.isSuspended = true
 	return nil
 }
 
-func (ctx *OrchestrationContext) onExecutionResumed(er *protos.ExecutionResumedEvent) error {
+func (ctx *OrchestrationContext) onExecutionResumed(_ *protos.ExecutionResumedEvent) error {
 	ctx.isSuspended = false
 	for _, e := range ctx.suspendedEvents {
 		if err := ctx.processEvent(e); err != nil {

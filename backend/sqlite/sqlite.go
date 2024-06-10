@@ -169,7 +169,6 @@ func (be *sqliteBackend) AbandonOrchestrationWorkItem(ctx context.Context, wi *b
 		string(wi.InstanceID),
 		wi.LockedBy,
 	)
-
 	if err != nil {
 		return fmt.Errorf("failed to update Instances table: %w", err)
 	}
@@ -380,9 +379,10 @@ func (be *sqliteBackend) CompleteOrchestrationWorkItem(ctx context.Context, wi *
 		return backend.ErrWorkItemLockLost
 	}
 
-	if err != nil {
-		return fmt.Errorf("failed to delete from the NewEvents table: %w", err)
-	}
+	// TODO: Combine with error above
+	// if err != nil {
+	// 	return fmt.Errorf("failed to delete from the NewEvents table: %w", err)
+	// }
 
 	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
@@ -422,7 +422,6 @@ func (be *sqliteBackend) CreateOrchestrationInstance(ctx context.Context, e *bac
 		instanceID,
 		eventPayload,
 	)
-
 	if err != nil {
 		return fmt.Errorf("failed to insert row into [NewEvents] table: %w", err)
 	}
@@ -535,7 +534,7 @@ func (be *sqliteBackend) handleInstanceExists(ctx context.Context, tx *sql.Tx, s
 
 		// should never happen, because we clean up instance before create new one
 		if rows <= 0 {
-			return fmt.Errorf("failed to insert into [Instances] table because entry already exists.")
+			return fmt.Errorf("failed to insert into [Instances] table because entry already exists")
 		}
 		return nil
 	}
@@ -622,7 +621,6 @@ func (be *sqliteBackend) AddNewOrchestrationEvent(ctx context.Context, iid api.I
 		string(iid),
 		eventPayload,
 	)
-
 	if err != nil {
 		return fmt.Errorf("failed to insert row into [NewEvents] table: %w", err)
 	}
@@ -974,7 +972,7 @@ func (be *sqliteBackend) PurgeOrchestrationState(ctx context.Context, id api.Ins
 }
 
 // Start implements backend.Backend
-func (*sqliteBackend) Start(context.Context) error {
+func (*sqliteBackend) Start(context.Context, []string, []string) error {
 	return nil
 }
 

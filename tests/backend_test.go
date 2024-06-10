@@ -184,7 +184,7 @@ func Test_ScheduleActivityTasks(t *testing.T) {
 	for i, be := range backends {
 		initTest(t, be, i, true)
 
-		wi, err := be.GetActivityWorkItem(ctx)
+		_, err := be.GetActivityWorkItem(ctx)
 		if !assert.ErrorIs(t, err, backend.ErrNoWorkItems) {
 			continue
 		}
@@ -208,6 +208,7 @@ func Test_ScheduleActivityTasks(t *testing.T) {
 		_, err = be.GetOrchestrationWorkItem(ctx)
 		assert.ErrorIs(t, err, backend.ErrNoWorkItems)
 
+		var wi *backend.ActivityWorkItem
 		// However, there should be an activity work item
 		wi, err = be.GetActivityWorkItem(ctx)
 		if assert.NoError(t, err) && assert.NotNil(t, wi) {
@@ -320,7 +321,7 @@ func Test_AbandonActivityWorkItem(t *testing.T) {
 
 			if err := be.AbandonActivityWorkItem(ctx, wi); assert.NoError(t, err) {
 				// Re-fetch the abandoned activity work item
-				wi, err = be.GetActivityWorkItem(ctx)
+				wi, _ = be.GetActivityWorkItem(ctx)
 				assert.Equal(t, "MyActivity", wi.NewEvent.GetTaskScheduled().GetName())
 				assert.Equal(t, int32(123), wi.NewEvent.EventId)
 				assert.Nil(t, wi.NewEvent.GetTaskScheduled().GetInput())

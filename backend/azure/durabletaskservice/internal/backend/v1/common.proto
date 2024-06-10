@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package dtmb.backend.v1;
+
+option go_package = "github.com/microsoft/dtmb-go/protos/backend/v1;backend";
+option csharp_namespace = "Microsoft.DTMB.Backend.Autogen.Grpc.v1";
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// Request for Metadata.
+message MetadataRequest {
+    // Empty
+}
+
+// Response for Metadata.
+message MetadataResponse {
+    // Version of the service.
+    string version = 1 [json_name = "version"];
+    // ID of the instance the service.
+    string instance_id = 2 [json_name = "instanceId"];
+}
+
+message TraceContext {
+    string trace_parent = 1 [json_name = "traceParent"];
+    string trace_state = 2 [json_name = "traceState"];
+    // Optional
+    string span_id = 3 [json_name = "spanId"];
+}
+
+enum OrchestrationStatus {
+    // Orchestration status unknown
+    // This is unused and indicates a missing value
+    UNKNOWN = 0;
+    // Orchestration has not been executed yet
+    PENDING = 1;
+    // Orchestration is currently being executed
+    RUNNING = 2;
+    // Orchestration completed successfully
+    COMPLETED = 3;
+    // Orchestration was restarted and continued as new
+    // This value is set on the previous orchestration
+    CONTINUED_AS_NEW = 4;
+    // Orchestration completed with errors
+    FAILED = 5;
+    // Orchestration was canceled
+    CANCELED = 6;
+    // Orchestration was forcefully terminated
+    TERMINATED = 7;
+    // Orchestration is currently suspended
+    SUSPENDED = 8;
+}
+
+// Indicates that the work item must be executed at a future time
+message Delay {
+    // The delay can be specified as either an asolute time, or as a delay from the current time
+    oneof delayed {
+        // Absolute time at which to start
+        google.protobuf.Timestamp time = 10 [json_name = "time"];
+        // Delay from the current time
+        // Note that units smaller than seconds are discarded
+        google.protobuf.Duration delay = 11 [json_name = "delay"];
+    }
+}
+
+message FailureDetails {
+    string error_type = 1 [json_name = "errorType"];
+    string error_message = 2 [json_name = "errorMessage"];
+    string stack_trace = 3 [json_name = "stackTrace"];
+    FailureDetails inner_failure = 4 [json_name = "innerFailure"];
+    bool retriable = 5 [json_name = "retriable"];
+}
+
+message ParentInstanceInfo {
+    // The ID of the parent orchestration
+    string orchestration_id = 1 [json_name = "orchestrationId"];
+    // The ID of the parent's task responsible for creating this orchestration
+    uint64 sequence_number = 2 [json_name = "sequenceNumber"];
+    // Name of the orchestration
+    string name = 12;
+    // Version of the orchestration
+    string version = 13;
+}
+
+// Message used to encode the result and failure details internally
+message ResultData {
+    bytes result = 1;
+    FailureDetails failure_details = 2 [json_name = "failureDetails"];
+}

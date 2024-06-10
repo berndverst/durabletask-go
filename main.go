@@ -11,6 +11,7 @@ import (
 
 	"github.com/microsoft/durabletask-go/backend"
 	"github.com/microsoft/durabletask-go/backend/sqlite"
+	"github.com/microsoft/durabletask-go/task"
 )
 
 var (
@@ -41,13 +42,13 @@ func main() {
 	}
 }
 
-func createTaskHubWorker(server *grpc.Server, sqliteFilePath string, logger backend.Logger) backend.TaskHubWorker {
+func createTaskHubWorker(server *grpc.Server, sqliteFilePath string, logger backend.Logger) task.TaskHubWorker {
 	sqliteOptions := sqlite.NewSqliteOptions(sqliteFilePath)
 	be := sqlite.NewSqliteBackend(sqliteOptions, logger)
 	executor, registerFn := backend.NewGrpcExecutor(be, logger)
 	registerFn(server)
 	orchestrationWorker := backend.NewOrchestrationWorker(be, executor, logger)
 	activityWorker := backend.NewActivityTaskWorker(be, executor, logger)
-	taskHubWorker := backend.NewTaskHubWorker(be, orchestrationWorker, activityWorker, logger)
+	taskHubWorker := task.NewTaskHubWorker(be, orchestrationWorker, activityWorker, logger, nil)
 	return taskHubWorker
 }

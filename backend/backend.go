@@ -49,7 +49,8 @@ type Backend interface {
 	DeleteTaskHub(context.Context) error
 
 	// Start starts any background processing done by this backend.
-	Start(context.Context) error
+	// Backends supporting this feature can filter orchestrator and activity types server-side.
+	Start(ctx context.Context, orchestrators []string, activities []string) error
 
 	// Stop stops any background processing done by this backend.
 	Stop(context.Context) error
@@ -163,7 +164,7 @@ func purgeOrchestrationState(ctx context.Context, be Backend, iid api.InstanceID
 }
 
 // terminateSubOrchestrationInstances submits termination requests to sub-orchestrations if [et.Recurse] is true.
-func terminateSubOrchestrationInstances(ctx context.Context, be Backend, iid api.InstanceID, state *OrchestrationRuntimeState, et *protos.ExecutionTerminatedEvent) error {
+func terminateSubOrchestrationInstances(ctx context.Context, be Backend, _ api.InstanceID, state *OrchestrationRuntimeState, et *protos.ExecutionTerminatedEvent) error {
 	if !et.Recurse {
 		return nil
 	}
